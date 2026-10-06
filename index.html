@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Web3 Sims: live the onchain grinder life</title>
+  <meta name="description" content="Web3 Sims: a browser life sim for crypto grinders. Farm airdrops, trade a fake market, mint NFTs, post on CT, land gigs and earn (fake) SOL." />
+  <meta property="og:title" content="Web3 Sims" />
+  <meta property="og:description" content="Farm airdrops, trade the news, mint JPEGs, grind CT. A Sims-style life sim for Web3 degens. Fake money, real vibes." />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💎</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="noise"></div>
+  <header class="top">
+    <div class="brand"><span class="gem"></span><span>WEB3 SIMS</span></div>
+    <div class="clock"><span id="dayIcon">☀️</span><strong id="clockDay">Day 1</strong><span id="clockTime">9:00 AM</span></div>
+    <div class="speed" role="group" aria-label="Game speed">
+      <button data-speed="0" title="Pause (Space)">⏸</button>
+      <button data-speed="1" class="on" title="1x (1)">1x</button>
+      <button data-speed="2" title="2x (2)">2x</button>
+      <button data-speed="3" title="3x (3)">3x</button>
+    </div>
+    <div class="pills">
+      <span class="pill sol" title="SOL balance (fake)"><i>◎</i><b id="solBal">0.50</b></span>
+      <span class="pill nw" title="Net worth"><i>NW</i><b id="nwBal">0.50</b></span>
+      <span class="pill mk" id="mkPill" title="Market sentiment">📈 x1.00</span>
+    </div>
+    <div class="topbtns">
+      <button class="tb" id="btnBuy" title="Buy mode (B)">🛒 <span>Buy</span></button>
+      <button class="tb" id="btnHelp" title="How to play">❓</button>
+      <button class="tb" id="btnReset" title="Reset save">⟲</button>
+    </div>
+  </header>
+  <div class="ticker"><span class="tlabel">NEWS</span><div class="tview"><div class="ttrack" id="ticker"></div></div></div>
+
+  <main class="game">
+    <section class="stage">
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="room" width="672" height="552" aria-label="Your apartment"></canvas>
+        <div id="menu" class="ctx" hidden></div>
+        <div class="homebadge" id="homeBadge">🏚️ Studio Apartment</div>
+        <div class="hint" id="hint">Click an object to interact · click the floor to walk</div>
+      </div>
+      <div class="actionbar" id="actionbar">
+        <span class="aemoji" id="aEmoji">🧍</span>
+        <div class="ainfo"><div class="alabel" id="aLabel">Idle. Waiting for your command, ser.</div><div class="abar"><i id="aProg"></i></div></div>
+        <span class="aleft" id="aLeft"></span>
+        <button class="cancel" id="aCancel" hidden>✕</button>
+      </div>
+      <div class="needs" id="needs"></div>
+    </section>
+
+    <aside class="side">
+      <div class="profile">
+        <canvas id="avatar" width="64" height="64"></canvas>
+        <div class="pmeta">
+          <div class="pname"><b id="pName">Trex</b><span class="badge" id="pTitle">Lurker</span></div>
+          <div class="phandle" id="pHandle">@Trextxxy</div>
+          <div class="pcareers" id="pCareers"></div>
+        </div>
+      </div>
+      <div class="pstats">
+        <div><b id="sFollowers">150</b><span>Followers</span></div>
+        <div><b id="sClout">10</b><span>Clout</span></div>
+        <div><b id="sRep">50</b><span>Rep</span></div>
+        <div><b id="sShill">0</b><span>Shill</span></div>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="feed" class="on">🏠<span>Feed</span></button>
+        <button data-tab="dms">💬<span>DMs</span><em id="bDms"></em></button>
+        <button data-tab="gigs">💼<span>Gigs</span><em id="bGigs"></em></button>
+        <button data-tab="market">📈<span>Market</span></button>
+        <button data-tab="farm">🪂<span>Farm</span><em id="bFarm"></em></button>
+        <button data-tab="nft">🖼️<span>NFTs</span><em id="bNft"></em></button>
+        <button data-tab="wallet">👛<span>Wallet</span></button>
+        <button data-tab="life">🏆<span>Life</span></button>
+      </nav>
+      <div class="panel" id="panel"></div>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <span>Web3 Sims · fake SOL, fake tokens, real vibes. Not financial advice (obviously).</span>
+    <a href="https://x.com/Trextxxy" target="_blank" rel="noopener">Built by Trex (@Trextxxy)</a>
+  </footer>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="modal" class="modal" hidden><div class="mbox" id="mbox"></div></div>
+
+  <script src="sim.js"></script>
+  <script src="market.js"></script>
+  <script src="airdrop.js"></script>
+  <script src="nft.js"></script>
+  <script src="social.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
