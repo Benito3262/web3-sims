@@ -14,7 +14,7 @@
   <!-- fonts load without blocking first paint; system fonts are used until (or if never) they arrive -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'" />
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" /></noscript>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
   <script>
     /* Startup guard: shows a loading screen, and a visible "tap to reset" screen if anything throws. Plain ES5 on purpose. */
     (function () {
@@ -58,12 +58,13 @@
       <button data-speed="3" title="3x (3)">3x</button>
     </div>
     <div class="pills">
-      <span class="pill sol" title="SOL balance (fake)"><i>◎</i><b id="solBal">0.50</b></span>
-      <span class="pill nw" title="Net worth"><i>NW</i><b id="nwBal">0.50</b></span>
+      <span class="pill sol" title="SOL balance (fake)"><i>◎</i><b id="solBal">0.00</b></span>
+      <span class="pill nw" title="Net worth"><i>NW</i><b id="nwBal">0.00</b></span>
       <span class="pill mk" id="mkPill" title="Market sentiment">📈 x1.00</span>
     </div>
     <div class="topbtns">
       <button class="tb" id="btnBuy" title="Buy mode (B)">🛒 <span>Buy</span></button>
+      <button class="tb" id="btnSound" title="Notification sound">🔕</button>
       <button class="tb" id="btnHelp" title="How to play">❓</button>
       <button class="tb" id="btnReset" title="Reset save">⟲</button>
     </div>
@@ -75,6 +76,7 @@
       <div class="canvas-wrap" id="wrap">
         <canvas id="room" width="672" height="552" aria-label="Your apartment"></canvas>
         <div id="menu" class="ctx" hidden></div>
+        <button class="phonebtn" id="phoneBtn" title="Your phone" aria-label="Phone"><span class="pi">📱</span><em></em></button>
         <div class="homebadge" id="homeBadge">🏚️ Studio Apartment</div>
         <div class="hint" id="hint">Tap objects to act · tap the door to go outside</div>
       </div>
@@ -125,14 +127,15 @@
   <div id="toasts" class="toasts"></div>
   <div id="modal" class="modal" hidden><div class="mbox" id="mbox"></div></div>
 
-  <script src="compat.js?v=3"></script>
-  <script src="sim.js?v=3"></script>
-  <script src="market.js?v=3"></script>
-  <script src="airdrop.js?v=3"></script>
-  <script src="nft.js?v=3"></script>
-  <script src="social.js?v=3"></script>
-  <script src="world.js?v=3"></script>
-  <script src="townview.js?v=3"></script>
-  <script src="ui.js?v=3"></script>
+  <script src="compat.js?v=4"></script>
+  <script src="sim.js?v=4"></script>
+  <script src="market.js?v=4"></script>
+  <script src="airdrop.js?v=4"></script>
+  <script src="nft.js?v=4"></script>
+  <script src="social.js?v=4"></script>
+  <script src="world.js?v=4"></script>
+  <script src="townview.js?v=4"></script>
+  <script src="life.js?v=4"></script>
+  <script src="ui.js?v=4"></script>
 </body>
 </html>

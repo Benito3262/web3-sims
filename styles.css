@@ -310,3 +310,31 @@ input, select { font-family: inherit; }
   .ctx { position: fixed !important; left: 8px !important; right: 8px !important; top: auto !important; bottom: 8px !important; max-width: none; min-width: 0; max-height: 62vh; z-index: 70; border-radius: 18px; box-shadow: 0 -10px 40px rgba(0,0,0,.6); }
   .ctx button { padding: .55rem .6rem; }
 }
+
+/* ---- devices, phone pings, life view ---- */
+.phonebtn { position: absolute; right: 12px; top: 12px; z-index: 5; width: 46px; height: 46px; border-radius: 14px; border: 1px solid var(--line); background: rgba(10,10,12,.82); font-size: 1.35rem; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.phonebtn.on { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(20,241,149,.25), 0 6px 18px rgba(0,0,0,.4); }
+.phonebtn em { position: absolute; top: -6px; right: -6px; font-style: normal; font-size: .62rem; font-family: var(--mono); background: var(--bad); color: #fff; border-radius: 99px; padding: 0 .32rem; min-width: 16px; line-height: 16px; text-align: center; }
+.phonebtn em:empty { display: none; }
+.phonebtn.buzz { animation: buzz .7s ease-in-out 2; }
+@keyframes buzz { 0%,100% { transform: rotate(0) } 10% { transform: rotate(-14deg) translateX(-2px) } 20% { transform: rotate(12deg) translateX(2px) } 30% { transform: rotate(-12deg) } 40% { transform: rotate(10deg) } 50% { transform: rotate(-6deg) } 60% { transform: rotate(4deg) } 70% { transform: rotate(0) } }
+.toast.notif { pointer-events: auto; cursor: pointer; display: flex; gap: .55rem; align-items: flex-start; border-left-color: var(--accent-2); background: linear-gradient(135deg, rgba(153,69,255,.16), rgba(22,22,26,.97)); }
+.toast.notif .ni { font-size: 1.15rem; line-height: 1.2; }
+.toast.notif small { display: block; color: var(--muted); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tabs button.locked { opacity: .5; }
+.tabs button.locked::after { content: '🔒'; position: absolute; bottom: 2px; right: 4px; font-size: .5rem; }
+.tabs button.locked.on { opacity: .85; }
+.devstrip { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .74rem; padding: .35rem .55rem; margin-bottom: .55rem; border-radius: 10px; background: rgba(20,241,149,.08); border: 1px solid rgba(20,241,149,.25); }
+.devstrip.phone { background: rgba(153,69,255,.08); border-color: rgba(153,69,255,.3); }
+.lifeview { border: 1px solid var(--line); border-radius: 14px; padding: .7rem .8rem; background: rgba(255,255,255,.025); }
+.lvhead { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+.lifeview .row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.pbadge { display: inline-block; background: var(--bad); color: #fff; border-radius: 99px; font-size: .66rem; padding: 0 .35rem; margin-left: .2rem; font-family: var(--mono); }
+.lsn { display: flex; gap: .55rem; padding: .45rem .5rem; border-radius: 10px; margin-bottom: .3rem; background: rgba(255,255,255,.03); border: 1px solid transparent; }
+.lsn.new { border-color: rgba(20,241,149,.3); background: rgba(20,241,149,.06); }
+.lsn .e { font-size: 1.1rem; }
+.chip.paid { color: #ffd166; border-color: rgba(255,209,102,.45); background: rgba(255,209,102,.08); }
+.kolrx button { font-size: .74rem; }
+.jobs .job { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .45rem .55rem; border: 1px solid var(--line); border-radius: 10px; margin-bottom: .35rem; }
+.jobs .job button { white-space: nowrap; }
+@media (max-width: 640px) { .phonebtn { width: 42px; height: 42px; right: 8px; top: 8px; } }

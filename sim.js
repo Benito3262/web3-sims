@@ -94,7 +94,7 @@
     builder: { name: 'Builder / Dev', emoji: '🛠️', desc: 'Ship code, win hackathons, earn grants. Touch less grass.', titles: [['Script Kiddie', 0], ['Hackathon Hero', 150], ['Protocol Dev', 600], ['Core Contributor', 2000], ['Founder', 6000]] },
   };
   const HOMES = [
-    { name: 'Studio Apartment', emoji: '🏚️', rent: 0.3, deposit: 0, minNW: 0, floor: ['#2a2118', '#30261b'], wall: '#1b1f2a', view: 'city', moodBonus: 0 },
+    { name: 'Studio Apartment', emoji: '🏚️', rent: 0.2, deposit: 0, minNW: 0, floor: ['#2a2118', '#30261b'], wall: '#1b1f2a', view: 'city', moodBonus: 0 },
     { name: 'Lekki 1BR Flat', emoji: '🏠', rent: 0.8, deposit: 4, minNW: 8, floor: ['#3a2d22', '#43342680'], wall: '#1e2a2a', view: 'lagoon', moodBonus: 0.08 },
     { name: 'Sky Penthouse', emoji: '🏙️', rent: 2, deposit: 20, minNW: 40, floor: ['#2b2d36', '#33363f'], wall: '#211b33', view: 'skyline', moodBonus: 0.15 },
     { name: 'Dubai Villa', emoji: '🏝️', rent: 5, deposit: 80, minNW: 150, floor: ['#d8cdb8', '#cfc3ac'], wall: '#2a2340', view: 'sea', moodBonus: 0.25 },
@@ -147,6 +147,15 @@
     S.feed.unshift(Object.assign({ id: S.nextId++, t: S.t }, entry));
     if (S.feed.length > 70) S.feed.length = 70;
   }
+  // phone notifications: they ping, they never auto-open the phone
+  function notify(kind, from, text, tab) {
+    if (!S) return;
+    const n = { id: S.nextId++, t: S.t, kind, from: String(from || ''), text: String(text || '').slice(0, 140), tab: tab || 'feed' };
+    S.notifs = S.notifs || [];
+    S.notifs.unshift(n); if (S.notifs.length > 30) S.notifs.length = 30;
+    S.phoneUnread = (S.phoneUnread || 0) + 1;
+    emit('notif', { n });
+  }
   function sys(text, av) { feed({ name: 'CT Sim', handle: 'ctsim', av: av || '🤖', text, sys: true }); }
   function npcPost(text, npc) { npc = npc || pick(NPCS); feed({ name: npc.name, handle: npc.handle, av: npc.av, text, likes: randInt(3, 900), rts: randInt(0, 120) }); }
 
@@ -169,7 +178,7 @@
       player: Object.assign({ name: 'Trex', handle: 'Trextxxy', color: '#9945FF', hat: 'cap', careers: ['creator'] }, player || {}),
       t: 9 * 60, // absolute game minutes (day 1, 9:00 AM)
       needs: { energy: 80, hunger: 70, fun: 70, social: 60, hygiene: 75 },
-      stats: { followers: 150, clout: 10, rep: 50, shill: 0, sol: 0.5, earned: 0, posts: 0, virals: 0, spaces: 0, gigsDone: 0, peakFollowers: 150 },
+      stats: { followers: 60, clout: 5, rep: 50, shill: 0, sol: 0, earned: 0, posts: 0, virals: 0, spaces: 0, gigsDone: 0, peakFollowers: 60, jobsDone: 0 },
       items: {},
       offers: [],
       gigs: [],
@@ -183,7 +192,9 @@
       pending: null,
       nextId: 1,
       career: { xp: { creator: 0, farmer: 0, trader: 0, degen: 0, builder: 0 } },
-      home: { tier: 0, missed: 0, debt: 0, nextRent: 7 * 1440 + 8 * 60 },
+      home: { tier: 0, missed: 0, debt: 0, nextRent: 7 * 1440 + 8 * 60, grace: true },
+      notifs: [],
+      phoneUnread: 0,
       nw: [],
     };
   }
@@ -192,7 +203,7 @@
     S = freshState(player);
     out = [];
     for (const m of mods) if (m.init) m.init(S, true);
-    sys('Welcome to Web3, @' + S.player.handle + '. 150 followers, 0.50 SOL and a dream. Click objects in your apartment to grind, or walk out the front door into town to meet people. wagmi 🫡', '🫡');
+    sys('Welcome to Web3, @' + S.player.handle + '. 60 followers, 0 SOL and a dream. You are crashing in a friend\'s starter room (rent-free until you earn your first 1 SOL). Free ways to earn: raid & mod jobs and bounties on your phone, testnet farming on your PC, shifts in town. wagmi 🫡', '🫡');
     daily(true);
     recordNW();
     return S;
@@ -215,7 +226,9 @@
       S.stats = Object.assign(freshState().stats, data.stats);
       S.flags = Object.assign(freshState().flags, data.flags);
       S.career = { xp: Object.assign(freshState().career.xp, (data.career || {}).xp) };
-      S.home = Object.assign(freshState().home, data.home);
+      S.home = Object.assign(freshState().home, { grace: false }, data.home);
+      if (!Array.isArray(S.notifs)) S.notifs = [];
+      if (typeof S.phoneUnread !== 'number') S.phoneUnread = 0;
       for (const m of mods) if (m.init) m.init(S, false);
       out = [];
       return S;
@@ -301,6 +314,11 @@
     return true;
   }
   function payRent() {
+    if (S.home.grace) {
+      if (S.stats.earned >= 1) { S.home.grace = false; S.home.nextRent = S.t + 7 * 1440; toast('🔑 You earned your first SOL. Your friend wants the room back: you now rent the Studio (◎' + HOMES[0].rent + '/week), first rent in 7 days.', 'info'); notify('bill', 'Landlord', 'Studio rent ◎' + HOMES[0].rent + '/week starts in 7 days', 'wallet'); }
+      else { S.home.nextRent += 7 * 1440; toast('🛋️ Still crashing at your friend\'s place. Rent deferred until you earn 1 SOL.', 'info'); }
+      return;
+    }
     const h = HOMES[S.home.tier];
     const due = r2(h.rent + S.home.debt);
     if (S.stats.sol >= due) {
@@ -348,6 +366,7 @@
     const groc = S.world && S.world.groceries > 0;
     list.cook = { obj: 'kitchen', label: groc ? 'Cook with groceries (' + S.world.groceries + ' left)' : 'Cook (cheap)', emoji: '🍳', mins: 45, cost: groc ? 0 : 0.01, fx: { hunger: groc ? 75 : 50, fun: groc ? 6 : 3, energy: -3 }, done: () => { if (S.world && S.world.groceries > 0) S.world.groceries--; } };
     list.snack = { obj: 'kitchen', label: 'Grab a snack', emoji: '🍪', mins: 5, fx: { hunger: 12 } };
+    list.garri = { obj: 'kitchen', label: 'Soak garri (free, broke-boy meal)', emoji: '🥣', mins: 10, fx: { hunger: 30, fun: -4 } };
     if (it.coffee) list.coffee = { obj: 'kitchen', label: 'Brew coffee', emoji: '☕', mins: 10, fx: { energy: 18, hunger: -2, fun: 2 } };
 
     list.tv = { obj: 'couch', label: 'Chill & watch TV', emoji: '📺', mins: 60, fx: { fun: 25, energy: 4 } };
@@ -419,7 +438,9 @@
     S.stats.peakFollowers = Math.max(S.stats.peakFollowers, S.stats.followers);
   }
   function progressGigs(kind) {
-    for (const g of S.gigs) g.reqs.forEach((r, i) => { if ((r.kind === kind || (r.kind === 'post' && kind !== 'space')) && g.prog[i] < r.n) g.prog[i]++; });
+    const hit = [];
+    for (const g of S.gigs) g.reqs.forEach((r, i) => { if ((r.kind === kind || (r.kind === 'post' && kind !== 'space')) && g.prog[i] < r.n) { g.prog[i]++; if (hit.indexOf(g) < 0) hit.push(g); } });
+    return hit;
   }
   function postKind(type) { return POST_TYPES[type].cat; }
 
@@ -442,13 +463,16 @@
     S.stats.posts++;
     if (tier === 2) S.stats.virals++;
     const likes = Math.max(0, Math.round((gain + randInt(1, 6)) * rand(2.5, 6) * (tier === 2 ? 3 : 1)));
-    feed({ name: S.player.name, handle: S.player.handle, av: 'me', text: pick(POST_TEXT[type]), likes, rts: Math.round(likes * rand(0.08, 0.3)), replies: Math.round(likes * rand(0.05, 0.2)), mine: true, tier });
+    const paidGig = S.gigs.find((g) => g.reqs.some((r, i) => (r.kind === postKind(type) || r.kind === 'post') && g.prog[i] < r.n));
+    let text = pick(POST_TEXT[type]);
+    if (paidGig) text = pick(['Been digging into ' + paidGig.project + '. Genuinely impressed so far 👀 #ad', paidGig.project + ' is cooking something big. Do your own research but I am watching closely 🔥 #ad', 'Partnered with ' + paidGig.project + ' for this one: here is why it matters 🧵 #ad', 'Not enough people are talking about ' + paidGig.project + ' 🚀 (sponsored)']);
+    feed({ name: S.player.name, handle: S.player.handle, av: 'me', text, likes, rts: Math.round(likes * rand(0.08, 0.3)), replies: Math.round(likes * rand(0.05, 0.2)), mine: true, tier, paid: paidGig ? paidGig.project : null, paidTier: paidGig ? paidGig.tier : null });
     const tierTxt = ['flopped 🫠', 'did decent 👍', 'went VIRAL 🚀'][tier];
     toast(P.emoji + ' ' + P.label + ' ' + tierTxt + ' · +' + gain + ' followers' + (boosted ? ' (alpha boost)' : ''), tier === 2 ? 'good' : tier === 0 ? 'bad' : 'info');
     unlock('first_post');
     if (tier === 2) unlock('first_viral');
     progressGigs(postKind(type));
-    modCall('onPost', type, tier, gain);
+    modCall('onPost', type, tier, gain, S.feed[0]);
     // random events
     if ((tier === 0 && R() < 0.22) || R() < 0.03) ratioed();
     else if (tier >= 1 && R() < 0.05) kolQT();
@@ -492,7 +516,7 @@
       if (o) {
         S.offers.unshift(o);
         feed({ name: o.project, handle: o.project.toLowerCase().replace(/[^a-z0-9]/g, ''), av: '🤝', text: pick(['ser we love your content. sending a brief 📩', 'gm! saw your threads. want to work together?', 'we have budget. you have reach. lets talk 🤝']), dm: true });
-        toast('📨 ' + o.project + ' replied! New premium gig in your inbox.', 'good');
+        toast('📨 ' + o.project + ' replied! New premium gig in your inbox.', 'good'); notify('gig', o.project, 'Replied to your outreach: ' + o.title + ' · ◎' + fmtSol(o.pay), 'gigs');
         return;
       }
     }
@@ -615,6 +639,7 @@
     for (let i = 0; i < n && S.offers.length < 4; i++) {
       const o = makeOffer();
       S.offers.push(o);
+      notify('gig', o.project, o.title + ' · ◎' + fmtSol(o.pay) + (o.tier === 'low' ? ' 🚩' : ''), 'gigs');
       feed({ name: o.project, handle: o.project.toLowerCase().replace(/[^a-z0-9]/g, ''), av: o.tier === 'low' ? '🚩' : '📣', text: 'Looking for creators: ' + o.title + '. Paying ' + fmtSol(o.pay) + ' SOL. DM open 📩', dm: true });
       emit('gig', {});
     }
@@ -710,7 +735,10 @@
   }
   function hourly() {
     const sleeping = S.action && S.action.sleep;
-    if (!sleeping && !S.pending && S.stats.sol > 0.05 && R() < 0.012) triggerDrainer();
+    if (!sleeping && !S.pending && S.stats.sol > 0.05 && R() < 0.012) {
+      if (root.Sim.Social) root.Sim.Social.receive('scam1', pick(['Congrats! Your wallet is eligible for 420 $SOL community airdrop 🎁 Claim: so1ana-claim.xyz', 'URGENT: suspicious activity on your wallet. Verify now at phantom-secure-login.app ⚠️']), { kind: 'scam', open: true });
+      else triggerDrainer();
+    }
     if (R() < 0.008 && !shadowbanned()) {
       S.flags.shadowUntil = S.t + 360;
       toast('👻 Shadowban scare! Impressions down 90%. Posts hit 50% weaker for 6h.', 'bad');
@@ -800,7 +828,7 @@
     CAREERS, HOMES, use, mod,
     careerTitle, careerNext, careerMetric, focus, focusMult, addXP, toggleCareer, primaryTitle,
     netWorth, moveHome, payRent,
-    h: { R: () => R(), rand, randInt, pick, clamp, r2, toast, feed, sys, npcPost, emit, unlock, addFollowers, scale, quality, NPCS, CHATTER, PROJECTS, LOW_PROJECTS, triggerDrainer, progressGigs, makeOffer },
+    h: { R: () => R(), notify, rand, randInt, pick, clamp, r2, toast, feed, sys, npcPost, emit, unlock, addFollowers, scale, quality, NPCS, CHATTER, PROJECTS, LOW_PROJECTS, triggerDrainer, progressGigs, makeOffer },
     _setRng(f) { rng = f || Math.random; },
     _resolvePost: (t) => resolvePost(t),
   };

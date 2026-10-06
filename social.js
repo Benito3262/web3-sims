@@ -97,7 +97,7 @@
     const th = SO.threads[id] || (SO.threads[id] = []);
     th.push(Object.assign({ id: S.nextId++, from, text, t: S.t }, extra || {}));
     if (th.length > 40) th.shift();
-    if (from !== 'me') { SO.unread[id] = (SO.unread[id] || 0) + 1; Sim.h.emit('dm', { from: id }); }
+    if (from !== 'me') { SO.unread[id] = (SO.unread[id] || 0) + 1; Sim.h.emit('dm', { from: id }); const pp = person(id); if (pp && Sim.h.notify) Sim.h.notify('dm', pp.name, text, 'dms'); }
   }
   function receive(id, text, extra) { addMsg(id, 'them', text, extra); }
   function markRead(id) { SO.unread[id] = 0; }
@@ -230,6 +230,7 @@
     const mine = S.feed.find((e) => e.mine);
     const n = tier === 2 ? randInt(2, 4) : tier === 1 ? randInt(0, 2) : (R() < 0.4 ? 1 : 0);
     for (let i = 0; i < n; i++) {
+      if (i === 0 && Sim.h.notify) Sim.h.notify('mention', 'Replies on your post', n + (n === 1 ? ' new reply' : ' new replies') + (tier === 2 ? ' · it is going viral 🚀' : ''), 'feed');
       let p = pick(PEOPLE.filter((x) => x.pers !== 'scammer'));
       if (tier === 0 && R() < 0.4) p = PEOPLE.find((x) => x.id === 'frog');
       const text = pick(REPLIES_TO_YOU[p.pers]);

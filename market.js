@@ -202,13 +202,13 @@
   };
 
   // ---------- trading ----------
-  const FEE = 0.003;
+  const FEE = 0.003, GAS = 0.0008; // swap fee + network gas (SOL)
   function buy(sym, solAmt) {
     const t = M.tokens[sym];
     solAmt = r2(+solAmt);
     if (!t || sym === 'SOL') return null;
     if (!(solAmt > 0)) { toast('Enter an amount, ser.', 'bad'); return null; }
-    if (S.stats.sol < solAmt) { toast('Not enough SOL.', 'bad'); return null; }
+    if (S.stats.sol < solAmt + GAS) { toast(S.stats.sol <= 0 ? 'Wallet is empty. Earn some SOL first (jobs, bounties, gigs).' : 'Not enough SOL (amount + ◎' + GAS + ' gas).', 'bad'); return null; }
     if (t.rugged) { toast('That token rugged. Please do not.', 'bad'); return null; }
     const usd = solAmt * solPrice() * (1 - FEE);
     const impact = usd / t.liq;
@@ -217,7 +217,8 @@
     const before = t.price;
     t.price *= 1 + impact;
     t.anchor *= 1 + impact * 0.5;
-    S.stats.sol = r2(S.stats.sol - solAmt);
+    S.stats.sol = r2(S.stats.sol - solAmt - GAS);
+    M.gas = r2((M.gas || 0) + GAS);
     const h = M.hold[sym] || (M.hold[sym] = { qty: 0, cost: 0 });
     h.qty += qty; h.cost += usd;
     M.trades++;
@@ -236,6 +237,7 @@
     const t = M.tokens[sym]; const h = M.hold[sym];
     frac = clamp(+frac || 1, 0, 1);
     if (!t || !h || h.qty <= 0) { toast('Nothing to sell.', 'bad'); return null; }
+    if (S.stats.sol < GAS) { toast('Need ◎' + GAS + ' SOL for gas to sell. (Yes, really.)', 'bad'); return null; }
     const qty = h.qty * frac;
     const gross = qty * t.price;
     const impact = Math.min(gross / t.liq, 0.9);
@@ -246,7 +248,8 @@
     h.qty -= qty; h.cost -= costPart;
     if (h.qty * t.price < 0.01) delete M.hold[sym];
     const sol = usd / solPrice();
-    S.stats.sol = r2(S.stats.sol + sol);
+    S.stats.sol = r2(S.stats.sol + sol - GAS);
+    M.gas = r2((M.gas || 0) + GAS);
     M.realized += pnl / solPrice();
     M.trades++;
     const pnlSol = pnl / solPrice();
@@ -277,6 +280,6 @@
     }).filter(Boolean).sort((a, b) => b.usd - a.usd);
   }
 
-  Sim.Market = { mod, buy, sell, credit, listToken, pushNews, randomNews, whaleEvent, rugEvent, launchMeme, scheduleLeak, solPrice, tokens, portfolio, holdValueSOL, fmtQty, fmtPrice, NEWS, get M() { return M; } };
+  Sim.Market = { mod, GAS, FEE, buy, sell, credit, listToken, pushNews, randomNews, whaleEvent, rugEvent, launchMeme, scheduleLeak, solPrice, tokens, portfolio, holdValueSOL, fmtQty, fmtPrice, NEWS, get M() { return M; } };
   Sim.use(mod);
 })(typeof window !== 'undefined' ? window : globalThis);

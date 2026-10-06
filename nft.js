@@ -129,6 +129,8 @@
     if (!n) return false;
     if (!N.cols[n.col]) { toast('Not revealed yet. Wait for mint to close.', 'bad'); return false; }
     if (!(price > 0)) { toast('Set a price.', 'bad'); return false; }
+    if (S.stats.sol < 0.0005) { toast('Need ◎0.0005 SOL for listing gas.', 'bad'); return false; }
+    S.stats.sol = r2(S.stats.sol - 0.0005);
     n.listed = price; toast('🏷️ Listed ' + n.col + ' #' + n.num + ' at ' + price + ' SOL', 'info'); return true;
   }
   function unlist(id) { const n = N.owned.find((x) => x.id === id); if (n) { n.listed = 0; return true; } return false; }
@@ -146,8 +148,8 @@
   function buyFloor(colName) {
     const c = N.cols[colName]; if (!c) return false;
     const price = r2(c.floor * 1.01);
-    if (S.stats.sol < price) { toast('Need ' + price + ' SOL to buy the floor.', 'bad'); return false; }
-    S.stats.sol = r2(S.stats.sol - price);
+    if (S.stats.sol < price + 0.001) { toast('Need ' + price + ' SOL + ◎0.001 gas to buy the floor.', 'bad'); return false; }
+    S.stats.sol = r2(S.stats.sol - price - 0.001);
     const r = rollTraits(true);
     const n = { id: S.nextId++, col: colName, emoji: c.emoji, num: randInt(1, c.supply), traits: r.traits, rarity: Math.min(r.rarity, 1), cost: price, listed: 0, t: S.t, revealed: true };
     N.owned.push(n);

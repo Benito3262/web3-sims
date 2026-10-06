@@ -85,8 +85,73 @@
   const clampI = (v, a, b) => Math.max(a, Math.min(b, v));
   const atTile = (sp) => Math.floor(char.x) === sp[0] && Math.floor(char.y) === sp[1];
 
+  // ================= DEVICES: phone / PC =================
+  // Apps (feed, DMs, gigs, market, farm, NFTs, wallet) only open while the sim is physically using a device.
+  const GATED = { feed: 1, dms: 1, gigs: 1, market: 1, farm: 1, nft: 1, wallet: 1 };
+  let device = null, devPending = null; // devPending: { kind, tab, until }
+  const PC_ONLY_IDS = { code: 1, hackathon: 1, games: 1, post_thread: 1, post_explainer: 1, job_write: 1, job_qa: 1, outreach: 1 };
+  function pcOnly(id) { return !!PC_ONLY_IDS[id] || (/^farm_/.test(id) && !/_checkin$/.test(id)); }
+  const HANDS_BUSY = /^(sleep|nap|passout|shower|bath|gym|workout|dance|swim|job_cafe|job_mkt)|^soc_/;
+  function handsBusy() { const a = S().action; return a && (a.sleep || HANDS_BUSY.test(String(a.id))) ? a : null; }
+  function deviceBlockReason(kind) {
+    const a = handsBusy();
+    if (a) return a.id === 'passout' ? 'You are passed out.' : 'Hands busy: ' + a.label + '. Finish or stop it first.';
+    if (kind === 'pc' && S().action && S().action.obj !== 'desk') return 'Stop ' + S().action.label + ' first.';
+    return null;
+  }
+  function requestDevice(kind, wantTab) {
+    if (wantTab) tab = wantTab;
+    if (device === kind || (kind === 'phone' && device === 'pc')) { openTab(tab); return true; }
+    const why = deviceBlockReason(kind);
+    if (why) { toast('📵 ' + why, 'bad'); renderPanel(true); return false; }
+    if (kind === 'pc') {
+      const a = S().action;
+      if (scene() === 'home' && (a && a.obj === 'desk' && !a.remote || (!char.path.length && atTile(OBJ.desk.spot)))) { device = 'pc'; afterDeviceOpen(); return true; }
+      if (a) { leaveSeat(); Sim.cancelAction(); }
+      closeMenu(); char.path = []; clearTalk();
+      pendingAct = { id: '__pc', obj: 'desk', label: 'Use PC', emoji: '🖥️', npc: null };
+      const sc = scene(); trip = sc !== 'home' ? { dest: 'home', ride: false } : null;
+      toast(sc !== 'home' ? '🖥️ Heading home to your PC…' : '🖥️ Walking to your desk…', 'info');
+      device = null; renderPanel(true);
+      return true;
+    }
+    devPending = { kind: 'phone', until: performance.now() + 700 };
+    renderPanel(true);
+    return true;
+  }
+  function afterDeviceOpen() {
+    devPending = null;
+    S().phoneUnread = 0;
+    if (!GATED[tab]) tab = 'feed';
+    openTab(tab);
+  }
+  function closeDevice(silent) {
+    if (!device && !devPending) return;
+    device = null; devPending = null;
+    if (!silent) toast('📵 Put the ' + (S().action ? 'device' : 'phone') + ' away. Touching grass mode.', 'info');
+    renderPanelSoon();
+  }
+  // called every frame: devices close when the situation makes them impossible
+  function syncDevice(now) {
+    if (devPending && now >= devPending.until) {
+      if (deviceBlockReason('phone')) { devPending = null; renderPanelSoon(); }
+      else { device = 'phone'; afterDeviceOpen(); }
+    }
+    if (!device) return;
+    if (handsBusy()) { device = null; renderPanelSoon(); return; }
+    const a = S().action;
+    if (device === 'pc' && (scene() !== 'home' || char.path.length || trip || (pendingAct && pendingAct.id !== '__pc') || (a && a.obj !== 'desk'))) { device = (a && (a.obj === 'phone' || a.remote)) || (!a && char.path.length) ? 'phone' : null; renderPanelSoon(); }
+    if (device) S().phoneUnread = 0;
+  }
+  function deviceForAction(id, info, remote) {
+    if (handsBusy()) { device = null; return; }
+    if (info.obj === 'desk' && !remote && scene() === 'home') device = 'pc';
+    else if (info.obj === 'phone' || remote) device = device === 'pc' ? 'pc' : 'phone';
+    else device = null;
+  }
+
   // where does an action happen?
-  function homeRemoteOK(id, obj) { return obj === 'phone' || (obj === 'desk' && id !== 'games'); }
+  function homeRemoteOK(id, obj) { return obj === 'phone' || (obj === 'desk' && !pcOnly(id)); }
   function targetFor(pa) {
     const obj = pa.obj;
     if (obj === 'npc') return { scene: scene(), npc: pa.npc };
@@ -118,13 +183,16 @@
     leaveSeat();
     closeMenu();
     const sc = scene();
-    if (sc !== 'home' && info.obj.indexOf(':') < 0 && info.obj !== 'npc' && homeRemoteOK(id, info.obj)) {
-      // do it right here on your phone / laptop (slower unless you are at the café)
+    const onPhoneHere = info.obj === 'phone' || (sc !== 'home' && info.obj.indexOf(':') < 0 && info.obj !== 'npc' && homeRemoteOK(id, info.obj));
+    if (onPhoneHere) {
+      // do it right here on your phone (slower for desk work unless you are at the café)
       pendingAct = null; trip = null; char.path = []; clearTalk();
-      Sim.startAction(id, { remote: true, minsMult: sc === 'cafe' ? 1 : 1.25 });
+      if (Sim.startAction(id, { remote: true, minsMult: info.obj === 'phone' || sc === 'cafe' ? 1 : 1.25 })) deviceForAction(id, info, true);
       flushEvents(); renderPanelSoon();
       return;
     }
+    if (info.obj === 'desk' && pcOnly(id) && sc !== 'home') toast('🖥️ ' + info.label + ' needs your PC. Heading home.', 'info');
+    if (!(info.obj === 'desk' && sc === 'home')) closeDevice(true);
     pendingAct = { id, obj: info.obj, label: info.label, emoji: info.emoji, npc: extra.npc || null };
     if (info.obj === 'npc') { WS().approach = extra.npc; WS().talkTo = extra.npc; }
     char.path = [];
@@ -137,6 +205,7 @@
     if (S().action && S().action.id === 'passout') return;
     if (S().action) { leaveSeat(); Sim.cancelAction(); }
     pendingAct = null; char.path = []; clearTalk(); closeMenu();
+    if (device === 'pc') closeDevice(true);
     if (dest === scene()) return;
     trip = { dest, ride: !!ride };
     if (speed === 0) toast('Game is paused. Press ▶ 1x to let your sim move.', 'info');
@@ -219,7 +288,12 @@
         }
         return;
       }
-      if (atTile(tg.spot)) { const id = pendingAct.id; pendingAct = null; Sim.startAction(id); flushEvents(); renderPanelSoon(); }
+      if (atTile(tg.spot)) {
+        const id = pendingAct.id; pendingAct = null;
+        if (id === '__pc') { device = 'pc'; afterDeviceOpen(); toast('🖥️ Logged in at your PC. Every app is open.', 'info'); }
+        else if (Sim.startAction(id)) deviceForAction(id, Sim.actionInfo(id), false);
+        flushEvents(); renderPanelSoon();
+      }
       else if (!walkTo(tg.spot[0], tg.spot[1])) pendingAct = null;
     }
   }
@@ -447,6 +521,7 @@
       if (a.id === 'sleep' || a.id === 'nap') { lying = true; sleep = true; x = 10.5; y = 1.2; }
     }
     if (a && a.id === 'passout') { lying = true; sleep = true; }
+    if (!a && device === 'pc' && sc === 'home' && !char.path.length) { [x, y] = OBJ.desk.sit; }
     const g = grid(); const k = sc === 'town' ? 0.62 : 1;
     const bob = char.walking ? Math.abs(Math.sin(char.bob)) * 3 * k : 0;
     const X = x * g.tile, Y = g.top + y * g.tile - bob;
@@ -458,6 +533,10 @@
       rr(bx - 15, by - 15, 30, 30, 15, 'rgba(255,255,255,.92)');
       cx.fillStyle = 'rgba(255,255,255,.92)'; cx.beginPath(); cx.moveTo(bx - 10, by + 8); cx.lineTo(bx - 18, by + 18); cx.lineTo(bx - 3, by + 12); cx.fill();
       emo(sleep ? '💤' : a.emoji, bx, by + 1, 17);
+    } else if (devPending || device) {
+      const bx = 24, by = -38 + (devPending ? Math.sin(time / 60) * 2 : 0);
+      rr(bx - 14, by - 14, 28, 28, 14, 'rgba(255,255,255,.92)');
+      emo(device === 'pc' ? '🖥️' : '📱', bx, by + 1, 16);
     } else if (pendingAct || trip) {
       emo('💭', 24, -36, 18);
     }
@@ -546,6 +625,7 @@
     const st = S();
     if (st.action) { if (st.action.id === 'passout') return; leaveSeat(); Sim.cancelAction(); }
     pendingAct = null; trip = null; clearTalk();
+    if (device === 'pc') closeDevice(true);
     const g = grid();
     walkTo(clampI(p.tx, 0, g.cols - 1), clampI(p.ty, 0, g.rows - 1));
   }
@@ -618,6 +698,7 @@
   function openMenuFor(obj, p, fromChar) {
     const acts = Sim.actionsFor(obj);
     const title = fromChar ? '📱 Your phone' : objName(obj);
+    if (fromChar) obj = 'phone';
     let html = '<h4><span>' + esc(title) + '</span><span class="mono">' + esc(Sim.fmtClock()) + '</span></h4>';
     if (fromChar && scene() !== 'home') html += '<div class="grp" style="text-transform:none">Out and about: desk & phone stuff runs on your phone (25% slower, full speed at the café).</div>';
     html += actButtons(acts);
@@ -629,6 +710,8 @@
       'bank:teller': [['wallet', '👛', 'Open wallet']], 'bank:otc': [['market', '📈', 'Open trading terminal']],
     }[obj] || [];
     if (fromChar && scene() !== 'home') html += travelButtons();
+    if (obj === 'desk') html += '<button class="link" data-dev="pc"><span class="e">🖥️</span><span class="l">' + (device === 'pc' ? 'Logged in at PC' : 'Sit down & log in') + '</span><span class="m">›</span></button>';
+    if (fromChar) html += '<button class="link" data-dev="phone"><span class="e">📱</span><span class="l">' + (device ? 'Phone is out' : 'Pull out phone') + (S().phoneUnread ? ' · ' + S().phoneUnread + ' new' : '') + '</span><span class="m">›</span></button>';
     if (links.length) { html += '<div class="grp">Apps</div>'; for (const [tab, e, l] of links) html += '<button class="link" data-goto="' + tab + '"><span class="e">' + e + '</span><span class="l">' + l + '</span><span class="m">›</span></button>'; }
     html += nowRow();
     placeMenu(html, p);
@@ -690,7 +773,8 @@
     const b = ev.target.closest('button'); if (!b || b.disabled) return;
     const d = b.dataset;
     if (d.qa) queueAction(d.qa, { npc: d.npc });
-    else if (d.goto) { setTab(d.goto); closeMenu(); }
+    else if (d.goto) { closeMenu(); setTab(d.goto); }
+    else if (d.dev) { closeMenu(); requestDevice(d.dev, d.dtab || null); }
     else if (d.cancel) { cancelCurrent(); closeMenu(); }
     else if (d.go) travel(d.go, false);
     else if (d.ride) travel(d.ride, true);
@@ -727,10 +811,56 @@
       else if (e.kind === 'achv') toast(e.text, 'achv', e.desc);
       else if (e.kind === 'modal' && e.modal === 'drainer') showDrainer();
       else if (e.kind === 'news') updateTicker();
+      else if (e.kind === 'notif') phoneNotif(e.n);
       dirty = true;
     }
     if (dirty) renderPanelSoon();
   }
+
+  // phone pings like real life: buzz + toast + optional sound. Never auto-opens the phone.
+  let soundOn = false; try { soundOn = localStorage.getItem('w3s.sound') === '1'; } catch (e) {}
+  let audioCtx = null, lastPing = 0, lastNotifToast = 0;
+  const phoneBtn = $('#phoneBtn'), soundBtn = $('#btnSound');
+  function paintSound() { if (soundBtn) { soundBtn.textContent = soundOn ? '🔔' : '🔕'; soundBtn.title = soundOn ? 'Notification sound on' : 'Notification sound off'; } }
+  paintSound();
+  if (soundBtn) soundBtn.onclick = () => { soundOn = !soundOn; try { localStorage.setItem('w3s.sound', soundOn ? '1' : '0'); } catch (e) {} paintSound(); if (soundOn) ping(); toast(soundOn ? '🔔 Notification sounds on' : '🔕 Notification sounds off', 'info'); };
+  function ping() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      audioCtx = audioCtx || new AC();
+      if (audioCtx.state === 'suspended' && audioCtx.resume) audioCtx.resume();
+      const t0 = audioCtx.currentTime;
+      [0, 0.12].forEach((d, i) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = i ? 1320 : 990;
+        g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.12, t0 + d + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.11);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t0 + d); o.stop(t0 + d + 0.13);
+      });
+    } catch (e) {}
+  }
+  function phoneNotif(n) {
+    if (!n) return;
+    if (device) { S().phoneUnread = 0; }
+    const now = performance.now();
+    if (phoneBtn) { phoneBtn.classList.remove('buzz'); void phoneBtn.offsetWidth; phoneBtn.classList.add('buzz'); }
+    if (now - lastNotifToast > 1200) {
+      lastNotifToast = now;
+      const el = document.createElement('div');
+      el.className = 'toast notif';
+      el.innerHTML = '<span class="ni">' + (NOTIF_ICON[n.kind] || '🔔') + '</span><span><b>' + esc(n.from) + '</b><small>' + esc(n.text) + '</small></span>';
+      el.onclick = () => { el.remove(); requestDevice('phone', n.tab || 'feed'); };
+      toastsEl.prepend(el);
+      while (toastsEl.children.length > 5) toastsEl.lastChild.remove();
+      setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, 4200);
+    }
+    if (soundOn && now - lastPing > 1500) { lastPing = now; ping(); try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]); } catch (e) {} }
+  }
+  if (phoneBtn) phoneBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (device) { closeDevice(); return; }
+    const last = (S().notifs || [])[0];
+    requestDevice('phone', S().phoneUnread && last ? last.tab : (GATED[tab] ? tab : 'feed'));
+  });
 
   const needsEl = $('#needs');
   needsEl.innerHTML = Sim.NEEDS.map((k) => '<div class="need" id="n_' + k + '"><div class="nl"><span>' + Sim.NEED_META[k].emoji + ' ' + Sim.NEED_META[k].label + '</span><b>0</b></div><div class="nb"><i></i></div></div>').join('') +
@@ -786,6 +916,7 @@
     $('#hint').textContent = sc === 'home' ? 'Tap objects to act · tap the door to go outside' : sc === 'town' ? 'Tap a building to go in · tap a sim to interact · tap yourself for your phone' : 'Tap objects or sims · door at the bottom leads out';
     // badges
     const ud = SO.unreadTotal(); $('#bDms').textContent = ud || '';
+    if (phoneBtn) { const pu = st.phoneUnread || 0; phoneBtn.querySelector('em').textContent = pu > 99 ? '99+' : (pu || ''); phoneBtn.classList.toggle('on', !!device); phoneBtn.querySelector('.pi').textContent = device === 'pc' ? '🖥️' : '📱'; }
     const ready = st.gigs.filter(Sim.gigReady).length; $('#bGigs').textContent = (st.offers.length + ready) || '';
     const claim = AD.A.protos.filter((p) => p.phase === 'tge' && p.alloc).length; $('#bFarm').textContent = claim ? '!' : '';
     const live = NF.N.drops.filter((d) => d.phase === 'wl' && d.wl || d.phase === 'public').length; $('#bNft').textContent = live ? 'live' : '';
@@ -812,11 +943,15 @@
   // ================= TABS / PANELS =================
   let tab = 'feed', dmOpen = null, mkSel = 'GLORP', panelDirty = true, lastPanelRender = 0;
   const panel = $('#panel');
-  function setTab(t) {
+  function openTab(t) {
     tab = t;
     for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === t);
     panel.scrollTop = 0;
     renderPanel(true);
+  }
+  function setTab(t) {
+    if (GATED[t] && !device) { openTab(t); if (!devPending) requestDevice('phone', t); return; }
+    openTab(t);
   }
   $('#tabs').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) setTab(b.dataset.tab); });
   function renderPanelSoon() { panelDirty = true; }
@@ -827,7 +962,9 @@
     const vals = {};
     for (const el of panel.querySelectorAll('input[id]')) vals[el.id] = el.value;
     const st = panel.scrollTop;
-    const fn = PANELS[tab]; panel.innerHTML = fn ? fn() : '';
+    const fn = PANELS[tab];
+    for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('locked', !!GATED[b.dataset.tab] && !device);
+    panel.innerHTML = GATED[tab] && !device ? PANELS.idle() : (device ? deviceStrip() : '') + (fn ? fn() : '');
     for (const [id, v] of Object.entries(vals)) { const el = document.getElementById(id); if (el) el.value = v; }
     if (keepId) { const el = document.getElementById(keepId); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} } }
     if (!force) panel.scrollTop = st;
@@ -843,6 +980,25 @@
   }
 
   const PANELS = {};
+  const NOTIF_ICON = { dm: '💬', mention: '🔔', gig: '💼', price: '📈', airdrop: '🪂', nft: '🖼️', pay: '💸', bill: '🧾', post: '📣', scam: '⚠️' };
+  function deviceStrip() {
+    return '<div class="devstrip ' + device + '"><span>' + (device === 'pc' ? '🖥️ At your PC · everything unlocked' : '📱 On your phone · heavy trading, farming & building need the PC') + '</span><button class="btn ghost sm" data-devclose="1">' + (device === 'pc' ? 'Log off' : 'Put away') + '</button></div>';
+  }
+  PANELS.idle = function () {
+    const st = S(); const n = st.phoneUnread || 0; const sc = scene();
+    const a = st.action; const busy = handsBusy();
+    let h = '<div class="lifeview"><div class="lvhead"><b>📵 No device in hand</b><span class="muted small">' + esc(Sim.fmtClock()) + ' · Day ' + Sim.day() + '</span></div>';
+    h += '<div class="small muted" style="margin:.2rem 0 .5rem">' + (devPending ? '📱 Pulling out your phone…' : busy ? '🙌 Hands busy: ' + esc(busy.label) + '.' : a ? 'Doing: ' + esc(a.label) + '.' : 'Living life. Apps open only while your sim is on the phone or at the PC.') + '</div>';
+    h += '<div class="row"><button class="btn green" data-dev="phone"' + (busy || devPending ? ' disabled' : '') + '>📱 Pull out phone' + (n ? ' <span class="pbadge">' + n + '</span>' : '') + '</button><button class="btn ghost" data-dev="pc"' + (busy ? ' disabled' : '') + '>🖥️ ' + (sc === 'home' ? 'Use PC' : 'Go home to PC') + '</button></div>';
+    h += '<div class="small muted" style="margin-top:.35rem">Phone: feed, DMs, gigs, wallet, quick trades (≤ ◎0.5), jobs. PC (home desk): big trades, airdrop farming, coding, threads.</div></div>';
+    h += '<h3>Lock screen <span class="chip">' + (n ? n + ' new' : 'all read') + '</span></h3>';
+    const list = (st.notifs || []).slice(0, 6);
+    if (!list.length) h += '<div class="empty small">No notifications. Suspiciously quiet.</div>';
+    for (const x of list) h += '<div class="lsn' + (list.indexOf(x) < n ? ' new' : '') + '"><span class="e">' + (NOTIF_ICON[x.kind] || '🔔') + '</span><div><b>' + esc(x.from) + '</b> <span class="muted small">' + ago(x.t) + '</span><div class="small">' + esc(x.text) + '</div></div></div>';
+    if (st.stats.sol < 0.05) h += '<div class="card small" style="margin-top:.5rem">💡 <b>Broke?</b> Pull out your phone → 💼 Gigs → <b>Jobs</b> (raids, mod shifts, bounties), or take a café shift in town. Airdrop testnet tasks are free.</div>';
+    h += '<div class="row" style="margin-top:.6rem"><button class="btn ghost sm" data-goto="town">🗺️ Town</button><button class="btn ghost sm" data-goto="life">🏆 Life</button></div>';
+    return h;
+  };
   PANELS.feed = function () {
     const st = S();
     let h = '<div class="composer"><span class="lbl">Post something (your sim walks to the desk):</span>';
@@ -852,10 +1008,12 @@
     for (const e of st.feed.slice(0, 45)) {
       const liked = SO.SO.liked[e.id], rted = SO.SO.liked['rt' + e.id];
       const cls = ['tw', e.mine ? 'mine' : '', e.news ? 'news' : '', e.ratio ? 'ratio' : '', e.sys ? 'sys' : ''].join(' ');
-      h += '<div class="' + cls + '">' + avHTML(e) + '<div class="bd"><div class="hd"><b>' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + ago(e.t) + '</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.tier === 2 ? '<span class="tierv">🚀 viral</span>' : e.tier === 0 ? '<span class="tierf">flop</span>' : '') + (e.dm ? '<span class="chip purple">DM/brief</span>' : '') + '</div>';
+      h += '<div class="' + cls + '">' + avHTML(e) + '<div class="bd"><div class="hd"><b>' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + ago(e.t) + '</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.tier === 2 ? '<span class="tierv">🚀 viral</span>' : e.tier === 0 ? '<span class="tierf">flop</span>' : '') + (e.dm ? '<span class="chip purple">DM/brief</span>' : '') + (e.paid ? '<span class="chip paid">💰 paid · ' + esc(e.paid) + (e.sym ? ' $' + esc(e.sym) : '') + '</span>' : '') + '</div>';
       h += '<div class="tx">' + esc(e.text) + '</div>';
-      if (e.thread && e.thread.length) h += '<div class="thr">' + e.thread.slice(0, 4).map((r) => '<div>' + esc(r.av) + ' <b>@' + esc(r.handle) + '</b>: ' + esc(r.text) + '</div>').join('') + '</div>';
+      if (e.thread && e.thread.length) h += '<div class="thr">' + (e.thread.length > 4 ? e.thread.slice(-4) : e.thread).map((r) => '<div>' + esc(r.av) + ' <b>@' + esc(r.handle) + '</b>: ' + esc(r.text) + '</div>').join('') + '</div>';
       if (!e.sys) h += '<div class="mx"><span>💬 ' + Sim.fmtNum(e.replies || (e.thread ? e.thread.length : 0)) + '</span><button data-rt="' + e.id + '" class="' + (rted ? 'on' : '') + '">🔁 ' + Sim.fmtNum(e.rts || 0) + '</button><button data-like="' + e.id + '" class="' + (liked ? 'on' : '') + '">♥ ' + Sim.fmtNum(e.likes || 0) + '</button>' + (e.npc && SO.person(e.npc) && SO.person(e.npc).met ? '<button data-dm="' + e.npc + '">✉️ DM</button>' : '') + '</div>';
+      if (e.kol && !e.reacted) h += '<div class="mx kolrx"><button data-kolr="' + e.id + '" data-k="bull">🚀 Hype it</button><button data-kolr="' + e.id + '" data-k="call">🧢 Call out the shill</button></div>';
+      else if (e.kol && e.reacted) h += '<div class="small muted">You ' + (e.reacted === 'bull' ? 'hyped this 🚀' : 'called this out 🧢') + '</div>';
       h += '</div></div>';
     }
     return h;
@@ -905,9 +1063,20 @@
   };
 
   function reqText(g) { return g.reqs.map((r, i) => (g.prog ? g.prog[i] + '/' : '') + r.n + ' ' + Sim.REQ_LABEL[r.kind]).join(' · '); }
+  function jobsHTML() {
+    const LF = Sim.Life; if (!LF) return '';
+    let h = '<h3>Jobs <span class="chip">always available · free to start</span></h3><div class="jobs">';
+    for (const id in LF.JOBS) {
+      const j = LF.JOBS[id]; const why = Sim.check(id, true);
+      const where = j.where === 'phone' ? '📱 phone' : j.where === 'pc' ? '🖥️ PC' : '📍 ' + W.LOTS[j.town].name;
+      const n = LF.jobCount(id);
+      h += '<div class="job"><div><b>' + j.emoji + ' ' + esc(j.label) + '</b><div class="small muted">' + esc(j.desc) + ' · ' + where + ' · ' + Sim.fmtDur(j.mins) + (n ? ' · done ' + n + 'x today (pay drops)' : '') + '</div></div><button class="btn sm' + (why ? ' ghost' : ' green') + '" data-qa="' + id + '"' + (why ? ' disabled title="' + esc(why) + '"' : '') + '>~◎' + Sim.fmtSol(LF.jobPay(id)) + '</button></div>';
+    }
+    return h + '</div>';
+  }
   PANELS.gigs = function () {
     const st = S();
-    let h = '';
+    let h = jobsHTML();
     h += '<h3>Active gigs <span class="chip">' + st.gigs.length + '/3</span></h3>';
     if (!st.gigs.length) h += '<div class="empty small">No active gigs. Accept an offer below.</div>';
     for (const g of st.gigs) {
@@ -952,7 +1121,8 @@
         const pnl = hold.qty * t.price - hold.cost;
         h += '<div class="row sb small" style="margin-top:.5rem"><span>PnL <b class="' + (pnl >= 0 ? 'up' : 'down') + '">' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</b>' + (hold.cost ? ' (' + ((hold.qty * t.price / hold.cost - 1) * 100).toFixed(1) + '%)' : ' (airdrop, free bag)') + '</span><span class="quick" style="margin:0"><button class="btn red sm" data-mksell="0.25">Sell 25%</button><button class="btn red sm" data-mksell="0.5">50%</button><button class="btn red sm" data-mksell="1">All</button></span></div>';
       }
-      h += '<div class="small muted" style="margin-top:.4rem">0.3% fee. Big orders move price (liquidity $' + Sim.fmtNum(t.liq) + '). Whales: that could be you.</div></div>';
+      if (device !== 'pc') h += '<div class="small" style="margin-top:.4rem;color:var(--warn)">📱 Phone trading: max ◎0.5 per buy. Use the PC for size.</div>';
+      h += '<div class="small muted" style="margin-top:.4rem">0.3% fee + ◎' + (Mk.GAS || 0.0008) + ' gas per swap. Big orders move price (liquidity $' + Sim.fmtNum(t.liq) + '). Whales: that could be you.</div></div>';
     }
     h += '<h3>Tokens</h3>';
     for (const k of toks) {
@@ -1151,9 +1321,11 @@
 
   // ---- panel events ----
   panel.addEventListener('click', (ev) => {
+    const dv = ev.target.closest('[data-dev],[data-devclose]');
+    if (dv && !dv.disabled) { if (dv.dataset.devclose) closeDevice(); else requestDevice(dv.dataset.dev, GATED[tab] ? tab : 'feed'); return; }
     const tb = ev.target.closest('[data-tgo],[data-tride]');
     if (tb && !tb.disabled) { if (tb.dataset.tgo) travel(tb.dataset.tgo, false); else travel(tb.dataset.tride, true); flushEvents(); renderPanelSoon(); return; }
-    const b = ev.target.closest('[data-qa],[data-like],[data-rt],[data-dm],[data-open],[data-dmback],[data-follow],[data-msg],[data-quick],[data-send],[data-goto],[data-mksel],[data-accept],[data-decline],[data-deliver],[data-mkbuy],[data-mksell],[data-amt],[data-amtp],[data-wallet],[data-claim],[data-mint],[data-list],[data-unlist],[data-floor],[data-career],[data-move],[data-how],[data-save]');
+    const b = ev.target.closest('[data-qa],[data-like],[data-rt],[data-dm],[data-open],[data-dmback],[data-follow],[data-msg],[data-quick],[data-send],[data-goto],[data-mksel],[data-accept],[data-decline],[data-deliver],[data-mkbuy],[data-mksell],[data-amt],[data-amtp],[data-wallet],[data-claim],[data-mint],[data-list],[data-unlist],[data-floor],[data-kolr],[data-career],[data-move],[data-how],[data-save]');
     if (!b || b.disabled) return;
     const d = b.dataset;
     if (d.qa) { queueAction(d.qa); return; }
@@ -1171,7 +1343,8 @@
     else if (d.accept) Sim.acceptGig(+d.accept);
     else if (d.decline) Sim.declineGig(+d.decline);
     else if (d.deliver) Sim.deliverGig(+d.deliver);
-    else if (d.mkbuy) { const v = parseFloat(($('#mkAmt') || {}).value); Mk.buy(mkSel, v); }
+    else if (d.mkbuy) { const v = parseFloat(($('#mkAmt') || {}).value); if (device !== 'pc' && v > 0.5) toast('📱 Max ◎0.5 per buy on your phone. Go to your PC for bigger orders.', 'bad'); else Mk.buy(mkSel, v); }
+    else if (d.kolr) { Sim.Life.reactToKol(+d.kolr, d.k); }
     else if (d.mksell) Mk.sell(mkSel, +d.mksell);
     else if (d.amt) { $('#mkAmt').value = d.amt; return; }
     else if (d.amtp) { $('#mkAmt').value = (Math.floor(S().stats.sol * +d.amtp * 1000) / 1000).toString(); return; }
@@ -1189,7 +1362,7 @@
   });
   panel.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target.id === 'dmInput') { ev.preventDefault(); sendTyped(); }
-    if (ev.key === 'Enter' && ev.target.id === 'mkAmt') { ev.preventDefault(); Mk.buy(mkSel, parseFloat(ev.target.value)); flushEvents(); renderPanel(); }
+    if (ev.key === 'Enter' && ev.target.id === 'mkAmt') { ev.preventDefault(); const v = parseFloat(ev.target.value); if (device !== 'pc' && v > 0.5) toast('📱 Max ◎0.5 per buy on your phone. Go to your PC for bigger orders.', 'bad'); else Mk.buy(mkSel, v); flushEvents(); renderPanel(); }
   });
   function sendTyped() { const el = $('#dmInput'); if (!el || !el.value.trim()) return; SO.sendDM(dmOpen, el.value); el.value = ''; flushEvents(); renderPanel(true); const e2 = $('#dmInput'); if (e2) e2.focus(); }
 
@@ -1244,6 +1417,9 @@
   }
   function showHowTo() {
     const h = '<p class="kicker">// how to play</p><h2>Welcome to Web3 Sims 💎</h2><p>Live the full onchain grinder life. Keep your sim alive, stack (fake) SOL, climb your career ladders.</p><div class="howto">' +
+      '<div><b>💸 Start from zero</b>You start with ◎0, crashing at a friend\'s place. Earn with phone jobs (raids, Discord mod, bounties), café shifts, free testnet airdrop tasks and gigs. Rent starts once you have earned ◎1.</div>' +
+      '<div><b>📱 Devices</b>Apps only open on a device. Pull out your phone (📱 button, or tap your sim) for feed, DMs, gigs, wallet and small trades. Sit at your home PC for big trades, airdrop farming, coding and threads. Notifications buzz your phone; you decide when to check.</div>' +
+      '<div><b>💰 Paid posts</b>Gig posts are marked #ad. Followers react over a few hours: likes, replies, and shill call-outs. Engagement moves the project\'s token; too many call-outs cost rep. NPC KOLs you follow post paid shills too. Hype them or call them out.</div>' +
       '<div><b>🏠 Tap objects</b>Desk = post, farm, build, outreach. Phone = scroll, Spaces, DMs. Bed, kitchen, shower, couch keep needs up.</div>' +
       '<div><b>🚪 Go outside</b>The front door leads to town: café, Web3 Hall, club, gym, park, market, bank and your neighbors. Walk, or pay ◎0.02 for a ride.</div>' +
       '<div><b>🤝 Meet sims</b>Tap a sim for Chat, Talk crypto, Share alpha, Pitch a gig, Collab, Joke, Befriend, Flirt, Exchange handles, Space invite… or Be rude. Friend / rival / romance bars change DMs, gigs and alpha.</div>' +
@@ -1328,6 +1504,7 @@
         if (!modalOpen && speed > 0 && !S().pending) Sim.tick(dt * MIN_PER_SEC * speed);
         if (S().pending && !modalOpen) showDrainer();
         updateChar(dt);
+        syncDevice(now);
         flushEvents();
         drawRoom(now);
         hudT += dt; saveT += dt;
@@ -1375,6 +1552,6 @@
     window.__w3sBooted = true;
     const ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   }
-  window.__GAME = { setSpeed, setTab, saveGame, renderPanel, flushEvents, travel, queueAction, enterScene, get tab() { return tab; }, get char() { return char; }, get trip() { return trip; }, get pendingAct() { return pendingAct; }, scene };
+  window.__GAME = { setSpeed, setTab, requestDevice, closeDevice, get device() { return device; }, get devPending() { return devPending; }, saveGame, renderPanel, flushEvents, travel, queueAction, enterScene, get tab() { return tab; }, get char() { return char; }, get trip() { return trip; }, get pendingAct() { return pendingAct; }, scene };
   boot();
 })();
