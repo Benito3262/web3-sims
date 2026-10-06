@@ -226,7 +226,8 @@
     feed({ npc: p.id, name: p.name, handle: p.handle, av: p.av, text: fill(pick(POSTS[p.pers])), likes: randInt(3, 900), rts: randInt(0, 150), role: p.role });
   }
 
-  mod.onPost = function (type, tier) {
+  mod.onPost = function (type, tier, gain, entry) {
+    if (entry && entry.mine) { entry.ptype = type; try { Adapter.postStatus(entry); } catch (e) {} }
     const mine = S.feed.find((e) => e.mine);
     const n = tier === 2 ? randInt(2, 4) : tier === 1 ? randInt(0, 2) : (R() < 0.4 ? 1 : 0);
     for (let i = 0; i < n; i++) {

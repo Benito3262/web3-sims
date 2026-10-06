@@ -87,7 +87,7 @@
 
   // ================= DEVICES: phone / PC =================
   // Apps (feed, DMs, gigs, market, farm, NFTs, wallet) only open while the sim is physically using a device.
-  const GATED = { feed: 1, dms: 1, gigs: 1, market: 1, farm: 1, nft: 1, wallet: 1 };
+  const GATED = { feed: 1, dms: 1, gigs: 1, market: 1, farm: 1, nft: 1, wallet: 1, players: 1 };
   let device = null, devPending = null; // devPending: { kind, tab, until }
   const PC_ONLY_IDS = { code: 1, hackathon: 1, games: 1, post_thread: 1, post_explainer: 1, job_write: 1, job_qa: 1, outreach: 1 };
   function pcOnly(id) { return !!PC_ONLY_IDS[id] || (/^farm_/.test(id) && !/_checkin$/.test(id)); }
@@ -565,9 +565,10 @@
     const m = Sim.minOfDay(); const na = nightAlpha(m);
     TV.drawTown(G, time, na > 0.2);
     const ids = W.npcsInTown();
-    const items = ids.map((id) => ({ id, y: WS().npcs[id].y })).concat([{ me: true, y: char.y }]).sort((a, b) => a.y - b.y);
+    const items = ids.map((id) => ({ id, y: WS().npcs[id].y })).concat([{ me: true, y: char.y }]).concat(remoteHere('town')).sort((a, b) => a.y - b.y);
     for (const it of items) {
       if (it.me) drawChar(time);
+      else if (it.remote) drawRemote(it.remote, it.x * W.TT, it.y * W.TT, 0.62);
       else { const n = WS().npcs[it.id]; drawNPC(it.id, n.x * W.TT, n.y * W.TT, 0.62, time, true); }
     }
     if (na > 0) TV.drawTownLights(G, na * 0.8);
@@ -576,13 +577,39 @@
   function drawInteriorScene(sc, time) {
     TV.drawInterior(G, sc, time);
     const list = W.npcsAt(sc);
-    const items = list.map((id, i) => { const p = TV.npcSlotPos(sc, list, i, time); return { id, x: p[0], y: p[1] }; }).concat([{ me: true, y: char.y }]).sort((a, b) => a.y - b.y);
-    for (const it of items) { if (it.me) drawChar(time); else drawNPC(it.id, it.x * T, WALL + it.y * T, 1, time, true); }
+    const items = list.map((id, i) => { const p = TV.npcSlotPos(sc, list, i, time); return { id, x: p[0], y: p[1] }; }).concat([{ me: true, y: char.y }]).concat(remoteHere(sc)).sort((a, b) => a.y - b.y);
+    for (const it of items) { if (it.me) drawChar(time); else if (it.remote) drawRemote(it.remote, it.x * T, WALL + it.y * T, 1); else drawNPC(it.id, it.x * T, WALL + it.y * T, 1, time, true); }
     if (hoverObj && sceneObjs()[hoverObj]) {
       cx.save(); cx.strokeStyle = 'rgba(20,241,149,.7)'; cx.lineWidth = 2; cx.setLineDash([6, 4]);
       for (const [x, y] of sceneObjs()[hoverObj].tiles) cx.strokeRect(x * T + 2, WALL + y * T + 2, T - 4, T - 4);
       cx.restore();
     }
+  }
+
+  // real players who are online in the same place (positions come from their presence heartbeat)
+  const remoteAnim = {};
+  function remoteHere(sc) {
+    const N = Sim.Net; if (!N || !N.me || !N.online) return [];
+    const out = [];
+    for (const o of N.online) {
+      if (o.scene !== sc || typeof o.x !== 'number') continue;
+      const a = remoteAnim[o.handle] || (remoteAnim[o.handle] = { x: o.x, y: o.y });
+      a.x += (o.x - a.x) * 0.08; a.y += (o.y - a.y) * 0.08;
+      out.push({ remote: o, x: a.x, y: a.y });
+    }
+    return out;
+  }
+  function drawRemote(o, X, Y, k) {
+    drawPerson(cx, X, Y, 1.25 * k, { player: { color: o.color || '#4cc9f0', hat: o.hat || 'none' } });
+    cx.save(); cx.font = '600 ' + Math.round(11 * Math.max(k, 0.8)) + 'px Space Grotesk, sans-serif'; cx.textAlign = 'center';
+    const label = '🌐 @' + o.handle; const w = cx.measureText(label).width + 10;
+    cx.fillStyle = 'rgba(10,30,60,.85)'; cx.beginPath(); cx.roundRect(X - w / 2, Y - 44 * k - 14, w, 16, 8); cx.fill();
+    cx.fillStyle = '#7fd4ff'; cx.fillText(label, X, Y - 44 * k - 2); cx.restore();
+  }
+  function remoteHit(p) {
+    const sc = scene(); let best = null, bd = sc === 'town' ? 1.2 : 0.7;
+    for (const it of remoteHere(sc)) { const d = Math.hypot(p.fx - it.x, p.fy - (it.y - 0.3)); if (d < bd) { bd = d; best = it.remote.handle; } }
+    return best;
   }
 
   // ---- input on canvas ----
@@ -635,6 +662,7 @@
     const st = S(); const sc = scene();
     if (st.action && st.action.outside) { openMenuFor(st.action.obj || 'door', p); return; }
     if (onMe(p) && !(st.action && st.action.id === 'passout')) { openMenuFor('phone', p, true); return; }
+    const rh = sc !== 'home' && remoteHit(p); if (rh) { openPlayer(rh); return; }
     if (sc === 'town') {
       const npc = npcHit(p); if (npc) { openNpcMenu(npc, p); return; }
       const ps = parkSpotAt(p); if (ps) { openMenuFor('park:' + ps, p); return; }
@@ -683,7 +711,7 @@
   }
   function placeMenu(html, p) {
     menu.innerHTML = '<button class="mclose" data-close="1" aria-label="Close">✕</button>' + html;
-    menu.hidden = false;
+    menu.hidden = false; document.body.classList.add('menuopen');
     const wrap = $('#wrap').getBoundingClientRect();
     let left = p.cssX + 10, top = p.cssY + 10;
     menu.style.left = '0px'; menu.style.top = '0px';
@@ -768,7 +796,7 @@
     if (P.met) html += '<button class="link" data-dmnpc="' + id + '"><span class="e">✉️</span><span class="l">Open DMs</span><span class="m">›</span></button>';
     placeMenu(html, p);
   }
-  function closeMenu() { menu.hidden = true; }
+  function closeMenu() { menu.hidden = true; document.body.classList.remove('menuopen'); }
   menu.addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b || b.disabled) return;
     const d = b.dataset;
@@ -795,13 +823,29 @@
 
   // ================= HUD / TOASTS =================
   const toastsEl = $('#toasts');
+  // At most 2 toasts on screen. Older ones collapse: achievements & pings go to the phone's lock screen.
+  const MAX_TOASTS = 2;
+  function collapseToast(el) {
+    if (el.dataset.keep && S()) {
+      const st = S(); st.notifs = st.notifs || [];
+      st.notifs.unshift({ id: st.nextId++, t: st.t, kind: el.dataset.keep, from: el.dataset.from || 'Web3 Sims', text: el.dataset.text || '', tab: el.dataset.tab || 'life' });
+      if (st.notifs.length > 30) st.notifs.length = 30;
+      if (el.dataset.keep === 'achv') st.phoneUnread = (st.phoneUnread || 0) + 1;
+    }
+    el.remove();
+  }
+  function pushToast(el, ms) {
+    toastsEl.prepend(el);
+    const live = [].slice.call(toastsEl.children).filter((x) => !x.classList.contains('out'));
+    for (let i = MAX_TOASTS; i < live.length; i++) collapseToast(live[i]);
+    setTimeout(() => { if (!el.parentNode) return; el.classList.add('out'); setTimeout(() => el.remove(), 300); }, ms);
+  }
   function toast(text, tone, desc) {
     const el = document.createElement('div');
     el.className = 'toast ' + (tone || 'info');
     el.innerHTML = esc(text) + (desc ? '<small>' + esc(desc) + '</small>' : '');
-    toastsEl.prepend(el);
-    while (toastsEl.children.length > 5) toastsEl.lastChild.remove();
-    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, tone === 'achv' ? 5200 : 3800);
+    if (tone === 'achv') { el.dataset.keep = 'achv'; el.dataset.from = text; el.dataset.text = desc || ''; el.dataset.tab = 'life'; }
+    pushToast(el, tone === 'achv' ? 3200 : tone === 'bad' ? 2800 : 2400);
   }
   function flushEvents() {
     const evs = Sim.drain();
@@ -843,15 +887,13 @@
     if (device) { S().phoneUnread = 0; }
     const now = performance.now();
     if (phoneBtn) { phoneBtn.classList.remove('buzz'); void phoneBtn.offsetWidth; phoneBtn.classList.add('buzz'); }
-    if (now - lastNotifToast > 1200) {
+    if (now - lastNotifToast > 1500 && menu.hidden) {
       lastNotifToast = now;
       const el = document.createElement('div');
       el.className = 'toast notif';
       el.innerHTML = '<span class="ni">' + (NOTIF_ICON[n.kind] || '🔔') + '</span><span><b>' + esc(n.from) + '</b><small>' + esc(n.text) + '</small></span>';
       el.onclick = () => { el.remove(); requestDevice('phone', n.tab || 'feed'); };
-      toastsEl.prepend(el);
-      while (toastsEl.children.length > 5) toastsEl.lastChild.remove();
-      setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, 4200);
+      pushToast(el, 3000);
     }
     if (soundOn && now - lastPing > 1500) { lastPing = now; ping(); try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]); } catch (e) {} }
   }
@@ -915,7 +957,11 @@
     $('#homeBadge').textContent = sc === 'home' ? Sim.HOMES[st.home.tier].emoji + ' ' + Sim.HOMES[st.home.tier].name : sc === 'town' ? '🌆 Town' + (evNow ? ' · LIVE ' + evNow.def.emoji + ' ' + evNow.def.name : '') : W.LOTS[sc].emoji + ' ' + W.LOTS[sc].name + (W.eventAt(sc) ? ' · LIVE' : '');
     $('#hint').textContent = sc === 'home' ? 'Tap objects to act · tap the door to go outside' : sc === 'town' ? 'Tap a building to go in · tap a sim to interact · tap yourself for your phone' : 'Tap objects or sims · door at the bottom leads out';
     // badges
-    const ud = SO.unreadTotal(); $('#bDms').textContent = ud || '';
+    const N = Sim.Net;
+    const ud = SO.unreadTotal() + (N && N.me ? (N.threads || []).reduce((a, t) => a + (+t.unread || 0), 0) : 0); $('#bDms').textContent = ud || '';
+    const nbt = $('#netBtn');
+    if (nbt && N) { const lab = N.status === 'online' && N.me ? '🟢 <span>' + (N.onlineCount || 1) + '</span>' : N.status === 'offline' ? '⚪ <span>offline</span>' : N.status === 'connecting' ? '… <span>net</span>' : '🌐 <span>Sign in</span>'; if (nbt.innerHTML !== lab) nbt.innerHTML = lab; nbt.className = 'tb net ' + N.status; nbt.title = N.me ? '@' + N.me.handle + ' · ' + (N.onlineCount || 1) + ' players online' : N.status === 'offline' ? 'Multiplayer offline (single-player still works)' : 'Sign up / log in for multiplayer'; }
+    const bp = $('#bPlayers'); if (bp && N) bp.textContent = N.me && N.onlineCount > 1 ? (N.onlineCount - 1) : '';
     if (phoneBtn) { const pu = st.phoneUnread || 0; phoneBtn.querySelector('em').textContent = pu > 99 ? '99+' : (pu || ''); phoneBtn.classList.toggle('on', !!device); phoneBtn.querySelector('.pi').textContent = device === 'pc' ? '🖥️' : '📱'; }
     const ready = st.gigs.filter(Sim.gigReady).length; $('#bGigs').textContent = (st.offers.length + ready) || '';
     const claim = AD.A.protos.filter((p) => p.phase === 'tge' && p.alloc).length; $('#bFarm').textContent = claim ? '!' : '';
@@ -980,7 +1026,38 @@
   }
 
   const PANELS = {};
-  const NOTIF_ICON = { dm: '💬', mention: '🔔', gig: '💼', price: '📈', airdrop: '🪂', nft: '🖼️', pay: '💸', bill: '🧾', post: '📣', scam: '⚠️' };
+  const CAREER_EMO = (ids) => (ids || []).map((c) => (Sim.CAREERS[c] ? Sim.CAREERS[c].emoji : '')).join('');
+  function playerRow(u) {
+    const p = u.profile || {};
+    return '<div class="person prow"><div class="av real" style="' + (p.color ? 'background:' + esc(p.color) + '33' : '') + '">🌐</div><div class="pm" data-player="' + esc(u.handle) + '"><b>' + esc(u.name) + '</b> <span class="small muted" style="display:inline">@' + esc(u.handle) + '</span> ' + (u.online ? '<span class="dot on"></span>' : '<span class="dot"></span>') +
+      '<span>' + esc(p.title || 'player') + ' ' + CAREER_EMO(p.careers) + ' · ' + Sim.fmtNum(p.followers || 0) + ' sim followers · ' + u.followers + ' 🌐' + (u.follows_you ? ' · follows you' : '') + '</span></div>' +
+      (u.me ? '<span class="chip">you</span>' : '<button class="btn ' + (u.you_follow ? 'ghost' : '') + ' sm" data-pfollow="' + esc(u.handle) + '" data-on="' + (u.you_follow ? '0' : '1') + '">' + (u.you_follow ? 'Following' : 'Follow') + '</button>') + '</div>';
+  }
+  let playersLoadedAt = 0;
+  PANELS.players = function () {
+    const N = Sim.Net;
+    if (!N) return '<div class="empty">Multiplayer unavailable.</div>';
+    if (N.status === 'off' || (!N.me && N.status !== 'offline')) {
+      return '<div class="lifeview"><b>🌐 Real players</b><p class="small muted">Create a free account to see who is online, follow real players, see their posts (paid #ads too) in your feed, like / repost / reply, and DM in real time. Your sim stays saved on this device.</p><div class="row"><button class="btn green" data-acct="1">Sign up</button><button class="btn ghost" data-acct="login">Log in</button></div></div>';
+    }
+    if (N.status === 'offline') return '<div class="netcta offline">⚪ Offline. The multiplayer server cannot be reached right now. Single-player keeps working; we retry automatically.</div>';
+    if (performance.now() - playersLoadedAt > 15000) { playersLoadedAt = performance.now(); N.loadDirectory(); N.loadWorld(); }
+    const me = N.me;
+    let h = '<div class="card row sb"><div><b>@' + esc(me.handle) + '</b> <span class="chip realchip">🟢 online</span><div class="small muted">' + me.followers + ' player followers · following ' + me.following + '</div></div><button class="btn ghost sm" data-acct="1">Account</button></div>';
+    h += '<h3>Who\'s online <span class="chip live">' + (N.onlineCount || 0) + ' online</span></h3>';
+    const on = N.online || [];
+    if (!on.length) h += '<div class="empty small">Nobody else online right now. Share web3sims.vercel.app with frens.</div>';
+    else h += '<div class="onl">' + on.map((o) => '<button class="btn ghost sm" data-player="' + esc(o.handle) + '">🟢 @' + esc(o.handle) + ' <span class="muted">' + esc(placeName(o.scene || 'home')) + '</span></button>').join('') + '</div>';
+    h += '<div class="sendrow" style="margin-top:.6rem"><input class="input" id="pSearch" placeholder="Search players by @handle…" maxlength="20" autocomplete="off"><button class="btn sm" data-psearch="1">Search</button></div>';
+    h += '<h3>Players <span class="chip">' + (N.total || N.dir.length) + ' total</span></h3><div class="people">';
+    for (const u of N.dir) h += playerRow(u);
+    if (!N.dir.length) h += '<div class="empty small">Loading…</div>';
+    h += '</div><h3>Latest from all players</h3>';
+    for (const p of (N.worldPosts || []).slice(0, 12)) h += '<div class="tw realp"><div class="av real">🌐</div><div class="bd"><div class="hd"><b class="plink" data-player="' + esc(p.author.handle) + '">' + esc(p.author.name) + '</b><span>@' + esc(p.author.handle) + ' · ' + rago(Date.parse(p.created_at)) + '</span>' + (p.paid ? '<span class="chip paid">💰 paid · ' + esc(p.paid) + '</span>' : '') + '</div><div class="tx">' + esc(p.text) + '</div><div class="mx small muted"><span>💬 ' + p.replies + '</span><span>🔁 ' + p.reposts + '</span><span>♥ ' + p.likes + '</span></div></div></div>';
+    if (!(N.worldPosts || []).length) h += '<div class="empty small">No player posts yet. Be the first.</div>';
+    return h;
+  };
+  const NOTIF_ICON = { follow: '➕', like: '♥', achv: '🏅', dm: '💬', mention: '🔔', gig: '💼', price: '📈', airdrop: '🪂', nft: '🖼️', pay: '💸', bill: '🧾', post: '📣', scam: '⚠️' };
   function deviceStrip() {
     return '<div class="devstrip ' + device + '"><span>' + (device === 'pc' ? '🖥️ At your PC · everything unlocked' : '📱 On your phone · heavy trading, farming & building need the PC') + '</span><button class="btn ghost sm" data-devclose="1">' + (device === 'pc' ? 'Log off' : 'Put away') + '</button></div>';
   }
@@ -999,19 +1076,45 @@
     h += '<div class="row" style="margin-top:.6rem"><button class="btn ghost sm" data-goto="town">🗺️ Town</button><button class="btn ghost sm" data-goto="life">🏆 Life</button></div>';
     return h;
   };
+  function rago(ts) { const d = Math.max(0, (Date.now() - ts) / 1000); return d < 60 ? 'now' : d < 3600 ? Math.floor(d / 60) + 'm' : d < 86400 ? Math.floor(d / 3600) + 'h' : Math.floor(d / 86400) + 'd'; }
+  let replyOpen = null;
+  function realBits(e) {
+    // extra bits for posts that live on the multiplayer server
+    let h = '';
+    if (e.rthread && e.rthread.length) h += '<div class="thr real">' + e.rthread.slice(-4).map((r) => '<div>🌐 <b class="plink" data-player="' + esc(r.handle) + '">@' + esc(r.handle) + '</b>: ' + esc(r.text) + '</div>').join('') + '</div>';
+    if (e.mine) {
+      h += '<div class="mx rmx"><span class="rtag">🌐 players</span><span>💬 ' + (e.rreplies || 0) + '</span><span>🔁 ' + (e.rrts || 0) + '</span><span>♥ ' + (e.rlikes || 0) + '</span><button data-rreply="' + e.rid + '">Reply</button></div>';
+    } else {
+      h += '<div class="mx"><button data-rreply="' + e.rid + '">💬 ' + Sim.fmtNum(e.replies || 0) + '</button><button data-rrt="' + e.rid + '" class="' + (e.rrted ? 'on' : '') + '">🔁 ' + Sim.fmtNum(e.rts || 0) + '</button><button data-rlike="' + e.rid + '" class="' + (e.rliked ? 'on' : '') + '">♥ ' + Sim.fmtNum(e.likes || 0) + '</button><button data-rdm="' + esc(e.handle) + '">✉️ DM</button>' + (e.paid ? '<button data-rcall="' + e.rid + '">🧢 Call out</button>' : '') + '<button data-rreport="' + e.rid + '" data-h="' + esc(e.handle) + '" title="Report">⚑</button></div>';
+    }
+    if (replyOpen === e.rid) h += '<div class="sendrow rrow"><input class="input" id="rReply" maxlength="280" placeholder="Reply to @' + esc(e.handle) + '…" autocomplete="off"><button class="btn sm" data-rsend="' + e.rid + '">Reply</button></div>';
+    return h;
+  }
+  function netComposer() {
+    const N = Sim.Net;
+    if (!N || N.status === 'off') return '<div class="netcta small">🌐 <b>Multiplayer:</b> <button class="btn sm" data-acct="1">Sign up / log in</button> to post to real players, follow them and DM.</div>';
+    if (N.status === 'offline') return '<div class="netcta small offline">⚪ Offline. Single-player keeps running; we will reconnect automatically.</div>';
+    if (!N.me) return '';
+    return '<div class="sendrow rrow"><input class="input" id="rPost" maxlength="280" placeholder="Post to real players as @' + esc(N.me.handle) + '…" autocomplete="off"><button class="btn sm green" data-rpost="1">Post 🌐</button></div>';
+  }
   PANELS.feed = function () {
     const st = S();
-    let h = '<div class="composer"><span class="lbl">Post something (your sim walks to the desk):</span>';
+    let h = netComposer() + '<div class="composer"><span class="lbl">Post something (your sim walks to the desk):</span>';
     for (const [k, p] of Object.entries(Sim.POST_TYPES)) h += '<button class="btn ghost sm" data-qa="post_' + k + '">' + p.emoji + ' ' + esc(p.label) + '</button>';
     h += '<button class="btn ghost sm" data-qa="space">🎙️ Host Space</button></div>';
     if (!st.feed.length) h += '<div class="empty">Timeline is empty. Post a gm.</div>';
     for (const e of st.feed.slice(0, 45)) {
       const liked = SO.SO.liked[e.id], rted = SO.SO.liked['rt' + e.id];
-      const cls = ['tw', e.mine ? 'mine' : '', e.news ? 'news' : '', e.ratio ? 'ratio' : '', e.sys ? 'sys' : ''].join(' ');
-      h += '<div class="' + cls + '">' + avHTML(e) + '<div class="bd"><div class="hd"><b>' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + ago(e.t) + '</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.tier === 2 ? '<span class="tierv">🚀 viral</span>' : e.tier === 0 ? '<span class="tierf">flop</span>' : '') + (e.dm ? '<span class="chip purple">DM/brief</span>' : '') + (e.paid ? '<span class="chip paid">💰 paid · ' + esc(e.paid) + (e.sym ? ' $' + esc(e.sym) : '') + '</span>' : '') + '</div>';
+      const cls = ['tw', e.mine ? 'mine' : '', e.news ? 'news' : '', e.ratio ? 'ratio' : '', e.sys ? 'sys' : '', e.real && !e.mine ? 'realp' : ''].join(' ');
+      if (e.real && !e.mine) {
+        h += '<div class="' + cls + '"><div class="av real">🌐</div><div class="bd"><div class="hd"><b class="plink" data-player="' + esc(e.handle) + '">' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + rago(e.ts) + '</span><span class="chip realchip">' + (e.online ? '🟢 ' : '') + 'REAL PLAYER</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.paid ? '<span class="chip paid">💰 paid · ' + esc(e.paid) + (e.sym ? ' $' + esc(e.sym) : '') + '</span>' : '') + '</div><div class="tx">' + esc(e.text) + '</div>' + realBits(e) + '</div></div>';
+        continue;
+      }
+      h += '<div class="' + cls + '">' + avHTML(e) + '<div class="bd"><div class="hd"><b>' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + ago(e.t) + '</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.npc ? '<span class="chip simchip">sim</span>' : '') + (e.mine && e.rid ? '<span class="chip realchip">🌐 synced</span>' : '') + (e.tier === 2 ? '<span class="tierv">🚀 viral</span>' : e.tier === 0 ? '<span class="tierf">flop</span>' : '') + (e.dm ? '<span class="chip purple">DM/brief</span>' : '') + (e.paid ? '<span class="chip paid">💰 paid · ' + esc(e.paid) + (e.sym ? ' $' + esc(e.sym) : '') + '</span>' : '') + '</div>';
       h += '<div class="tx">' + esc(e.text) + '</div>';
       if (e.thread && e.thread.length) h += '<div class="thr">' + (e.thread.length > 4 ? e.thread.slice(-4) : e.thread).map((r) => '<div>' + esc(r.av) + ' <b>@' + esc(r.handle) + '</b>: ' + esc(r.text) + '</div>').join('') + '</div>';
       if (!e.sys) h += '<div class="mx"><span>💬 ' + Sim.fmtNum(e.replies || (e.thread ? e.thread.length : 0)) + '</span><button data-rt="' + e.id + '" class="' + (rted ? 'on' : '') + '">🔁 ' + Sim.fmtNum(e.rts || 0) + '</button><button data-like="' + e.id + '" class="' + (liked ? 'on' : '') + '">♥ ' + Sim.fmtNum(e.likes || 0) + '</button>' + (e.npc && SO.person(e.npc) && SO.person(e.npc).met ? '<button data-dm="' + e.npc + '">✉️ DM</button>' : '') + '</div>';
+      if (e.mine && e.rid) h += realBits(e);
       if (e.kol && !e.reacted) h += '<div class="mx kolrx"><button data-kolr="' + e.id + '" data-k="bull">🚀 Hype it</button><button data-kolr="' + e.id + '" data-k="call">🧢 Call out the shill</button></div>';
       else if (e.kol && e.reacted) h += '<div class="small muted">You ' + (e.reacted === 'bull' ? 'hyped this 🚀' : 'called this out 🧢') + '</div>';
       h += '</div></div>';
@@ -1019,8 +1122,29 @@
     return h;
   };
 
+  function realThreadHTML(handle) {
+    const N = Sim.Net; const k = handle.toLowerCase(); const th = N.thread[k] || []; const u = (N.threadUser || {})[k];
+    let h = '<div class="row sb"><button class="btn ghost sm" data-dmback="1">‹ Inbox</button><span class="row" style="gap:.3rem">' + (u ? '<button class="btn ' + (u.you_follow ? 'ghost' : '') + ' sm" data-pfollow="' + esc(handle) + '" data-on="' + (u.you_follow ? '0' : '1') + '">' + (u.you_follow ? 'Following' : 'Follow') + '</button>' : '') + '<button class="btn ghost sm" data-player="' + esc(handle) + '">Profile</button></span></div>';
+    h += '<div class="card" style="margin-top:.5rem"><div class="row"><div class="av real" style="width:40px;height:40px">🌐</div><div style="flex:1"><b>' + esc(u ? u.name : handle) + '</b> <span class="muted small">@' + esc(handle) + '</span> <span class="chip realchip">' + (u && u.online ? '🟢 online' : 'REAL PLAYER') + '</span><div class="small muted">' + esc(u && u.profile && u.profile.title || 'player') + (u && u.follows_you ? ' · follows you' : '') + '</div></div></div></div>';
+    h += '<div class="chat">';
+    if (!th.length) h += '<div class="empty">No messages yet. Say gm 👋 (they see it in real time).</div>';
+    for (const m of th) h += '<div class="msg ' + (m.from.toLowerCase() === N.me.handle.toLowerCase() ? 'me' : '') + '">' + esc(m.text) + '<span class="mt">' + rago(Date.parse(m.created_at)) + '</span></div>';
+    h += '</div><div class="sendrow"><input class="input" id="rDm" placeholder="Message @' + esc(handle) + '…" maxlength="500" autocomplete="off"><button class="btn" data-rdmsend="' + esc(handle) + '">Send</button></div>';
+    h += '<div class="row" style="margin-top:.4rem;gap:.3rem"><button class="btn ghost sm" data-pblock="' + esc(handle) + '" data-on="1">🚫 Block</button><button class="btn ghost sm" data-preport="' + esc(handle) + '">⚑ Report</button></div>';
+    return h;
+  }
+  function realInboxHTML() {
+    const N = Sim.Net;
+    if (!N || !N.me) return N && N.status === 'offline' ? '<div class="netcta small offline">⚪ Offline: player DMs will be back when we reconnect.</div>' : '<div class="netcta small">🌐 <button class="btn sm" data-acct="1">Sign up</button> to DM real players.</div>';
+    let h = '<h3>🌐 Players <span class="chip realchip">real time</span></h3><div class="people">';
+    if (!N.threads.length) h += '<div class="empty small">No player DMs yet. Find people in the 🌐 Players tab.</div>';
+    for (const t of N.threads) h += '<div class="person" data-rdm="' + esc(t.handle) + '"><div class="av real">🌐</div><div class="pm"><b>' + esc(t.name) + '</b> <span class="small muted" style="display:inline">@' + esc(t.handle) + (t.online ? ' · 🟢' : '') + '</span><span>' + (t.last_from_me ? 'You: ' : '') + esc(t.last) + '</span></div>' + (t.unread ? '<em>' + t.unread + '</em>' : '') + '</div>';
+    return h + '</div>';
+  }
   PANELS.dms = function () {
     const st = S(); const so = SO.SO;
+    if (dmOpen && String(dmOpen).indexOf('u:') === 0 && Sim.Net && Sim.Net.me) return realThreadHTML(dmOpen.slice(2));
+    if (dmOpen && String(dmOpen).indexOf('u:') === 0) dmOpen = null;
     if (dmOpen) {
       const p = SO.person(dmOpen);
       SO.markRead(dmOpen);
@@ -1046,7 +1170,7 @@
     const people = SO.PEOPLE.map((x) => SO.person(x.id));
     const withThreads = people.filter((p) => (so.threads[p.id] || []).length).sort((a, b) => last(b) - last(a));
     function last(p) { const th = so.threads[p.id]; return th && th.length ? th[th.length - 1].t : 0; }
-    let h = '<h3>Inbox <span class="chip">' + SO.unreadTotal() + ' unread</span></h3><div class="people">';
+    let h = realInboxHTML() + '<h3>Sims inbox <span class="chip">' + SO.unreadTotal() + ' unread</span></h3><div class="people">';
     if (!withThreads.length) h += '<div class="empty">No DMs yet. NPC sims will slide in soon, or start a chat below.</div>';
     for (const p of withThreads) {
       const th = so.threads[p.id]; const lm = th[th.length - 1];
@@ -1321,6 +1445,8 @@
 
   // ---- panel events ----
   panel.addEventListener('click', (ev) => {
+    const nb = ev.target.closest('[data-acct],[data-player],[data-pfollow],[data-pblock],[data-preport],[data-rdm],[data-rdmsend],[data-rlike],[data-rrt],[data-rreply],[data-rsend],[data-rpost],[data-rcall],[data-rreport],[data-psearch]');
+    if (nb && !nb.disabled) { netClick(nb); return; }
     const dv = ev.target.closest('[data-dev],[data-devclose]');
     if (dv && !dv.disabled) { if (dv.dataset.devclose) closeDevice(); else requestDevice(dv.dataset.dev, GATED[tab] ? tab : 'feed'); return; }
     const tb = ev.target.closest('[data-tgo],[data-tride]');
@@ -1333,7 +1459,7 @@
     else if (d.rt) { SO.repost(+d.rt); }
     else if (d.dm) { dmOpen = d.dm; setTab('dms'); return; }
     else if (d.open) { if (ev.target.closest('[data-follow]')) return; dmOpen = d.open; renderPanel(true); return; }
-    else if (d.dmback) { dmOpen = null; }
+    else if (d.dmback) { dmOpen = null; if (Sim.Net) Sim.Net.openThread(null); }
     else if (d.follow) { const p = SO.person(d.follow); SO.follow(d.follow, !p.youFollow); }
     else if (d.msg) { SO.act(+d.msg, d.choice); }
     else if (d.quick) { SO.sendDM(dmOpen, d.quick); flushEvents(); renderPanel(true); return; }
@@ -1362,8 +1488,98 @@
   });
   panel.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target.id === 'dmInput') { ev.preventDefault(); sendTyped(); }
+    if (ev.key === 'Enter' && ev.target.id === 'rDm') { ev.preventDefault(); const b = panel.querySelector('[data-rdmsend]'); if (b) netClick(b); }
+    if (ev.key === 'Enter' && ev.target.id === 'rReply') { ev.preventDefault(); const b = panel.querySelector('[data-rsend]'); if (b) netClick(b); }
+    if (ev.key === 'Enter' && ev.target.id === 'rPost') { ev.preventDefault(); const b = panel.querySelector('[data-rpost]'); if (b) netClick(b); }
+    if (ev.key === 'Enter' && ev.target.id === 'pSearch') { ev.preventDefault(); const b = panel.querySelector('[data-psearch]'); if (b) netClick(b); }
     if (ev.key === 'Enter' && ev.target.id === 'mkAmt') { ev.preventDefault(); const v = parseFloat(ev.target.value); if (device !== 'pc' && v > 0.5) toast('📱 Max ◎0.5 per buy on your phone. Go to your PC for bigger orders.', 'bad'); else Mk.buy(mkSel, v); flushEvents(); renderPanel(); }
   });
+  async function netClick(b) {
+    const N = Sim.Net; const d = b.dataset;
+    const show = (r, okMsg) => { if (r && r.ok) { if (okMsg) toast(okMsg, 'good'); } else if (r) toast('🌐 ' + N.errText(r.error), 'bad'); renderPanelSoon(); };
+    if (d.acct) { openAccount(d.acct === 'login' ? 'login' : null); return; }
+    if (!N || !N.me) { openAccount(); return; }
+    if (d.player) { openPlayer(d.player); return; }
+    if (d.pfollow) { show(await N.follow(d.pfollow, d.on === '1'), d.on === '1' ? '➕ Following @' + d.pfollow : 'Unfollowed @' + d.pfollow); if (modalOpen && mbox.querySelector('[data-pmodal]')) openPlayer(d.pfollow); return; }
+    if (d.pblock) { if (d.on === '1' && !confirm('Block @' + d.pblock + '? They can\'t DM, follow or reply to you.')) return; show(await N.block(d.pblock, d.on === '1'), d.on === '1' ? '🚫 Blocked @' + d.pblock : 'Unblocked @' + d.pblock); if (d.on === '1' && dmOpen === 'u:' + d.pblock) { dmOpen = null; N.openThread(null); } if (modalOpen) closeModal(); return; }
+    if (d.preport) { const why = prompt('Report @' + d.preport + ' — what happened?', 'spam / abuse'); if (why === null) return; show(await N.report(d.preport, null, why), '⚑ Reported. Thanks.'); return; }
+    if (d.rreport) { if (!confirm('Report this post?')) return; show(await N.report(d.h, +d.rreport, 'post'), '⚑ Post reported.'); return; }
+    if (d.rdm) { if (modalOpen) closeModal(); dmOpen = 'u:' + d.rdm; N.openThread(d.rdm); openTab('dms'); return; }
+    if (d.rdmsend) { const el = $('#rDm'); if (!el || !el.value.trim()) return; const v = el.value; el.value = ''; show(await N.dmSend(d.rdmsend, v)); setTimeout(() => { panel.scrollTop = panel.scrollHeight; const e2 = $('#rDm'); if (e2) e2.focus(); }, 30); return; }
+    if (d.rlike) { const e = S().feed.find((x) => x.rid === +d.rlike); show(await N.like(+d.rlike, !(e && e.rliked))); return; }
+    if (d.rrt) { const e = S().feed.find((x) => x.rid === +d.rrt); show(await N.repost(+d.rrt, !(e && e.rrted))); return; }
+    if (d.rreply) { replyOpen = replyOpen === +d.rreply ? null : +d.rreply; renderPanel(); const el = $('#rReply'); if (el) el.focus(); return; }
+    if (d.rsend) { const el = $('#rReply'); if (!el || !el.value.trim()) return; const v = el.value; replyOpen = null; show(await N.reply(+d.rsend, v)); return; }
+    if (d.rcall) { show(await N.reply(+d.rcall, pick(['🧢 paid post? disclose it ser', 'how much did they pay for this one 👀', '#ad energy. DYOR frens'])), '🧢 Called it out.'); S().stats.rep = Math.min(100, S().stats.rep + 1); return; }
+    if (d.rpost) {
+      const el = $('#rPost'); if (!el || !el.value.trim()) return; const v = el.value.trim(); el.value = '';
+      const entry = { id: S().nextId++, t: S().t, name: S().player.name, handle: S().player.handle, av: 'me', text: v, mine: true, likes: 0, rts: 0, replies: 0 };
+      S().feed.unshift(entry); if (S().feed.length > 70) S().feed.length = 70;
+      const r = await N.pushPost(entry, v);
+      if (!r || !r.ok) { S().feed.splice(S().feed.indexOf(entry), 1); show(r || { error: 'db_unreachable' }); } else { toast('🌐 Posted to your player followers', 'good'); renderPanel(); }
+      return;
+    }
+    if (d.psearch) { const el = $('#pSearch'); show(await N.loadDirectory(el ? el.value.trim() : '')); return; }
+  }
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  async function openPlayer(handle) {
+    const N = Sim.Net; if (!N || !N.me) { openAccount(); return; }
+    const k = handle.toLowerCase();
+    const render = () => {
+      const pr = N.profiles[k];
+      if (!pr) return '<div data-pmodal="1"><p class="kicker">// player</p><h2>@' + esc(handle) + '</h2><p class="muted">Loading…</p><div class="mrow"><button class="btn ghost" id="pClose">Close</button></div></div>';
+      const u = pr.user, p = u.profile || {};
+      let h = '<div data-pmodal="1"><p class="kicker">// real player 🌐</p><div class="row" style="gap:.7rem;align-items:center"><div class="av real" style="width:54px;height:54px;font-size:1.6rem;' + (p.color ? 'background:' + esc(p.color) + '44' : '') + '">🌐</div><div><h2 style="margin:0">' + esc(u.name) + '</h2><div class="muted">@' + esc(u.handle) + ' ' + (u.online ? '<span class="chip live">🟢 online' + (p.scene ? ' · ' + esc(placeName(p.scene)) : '') + '</span>' : '<span class="chip">last seen ' + rago(Date.parse(u.last_seen)) + ' ago</span>') + (u.follows_you ? ' <span class="chip">follows you</span>' : '') + '</div></div></div>';
+      h += '<div class="pstats" style="margin:.7rem 0"><div><b>' + Sim.fmtNum(p.followers || 0) + '</b><span>Sim followers</span></div><div><b>' + u.followers + '</b><span>🌐 Followers</span></div><div><b>' + u.following + '</b><span>Following</span></div><div><b>' + (p.rep != null ? p.rep : '?') + '</b><span>Rep</span></div></div>';
+      h += '<div class="small"><span class="badge">' + esc(p.title || 'player') + '</span> ' + (p.careers || []).map((c) => Sim.CAREERS[c] ? '<span class="chip">' + Sim.CAREERS[c].emoji + ' ' + esc(Sim.CAREERS[c].name) + '</span>' : '').join(' ') + (p.home ? ' <span class="chip">🏠 ' + esc(p.home) + '</span>' : '') + (p.day ? ' <span class="chip">Day ' + p.day + '</span>' : '') + (p.nw != null ? ' <span class="chip">NW ◎' + p.nw + '</span>' : '') + '</div>';
+      if (!u.me) h += '<div class="mrow" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn ' + (u.you_follow ? 'ghost' : 'green') + '" data-pfollow="' + esc(u.handle) + '" data-on="' + (u.you_follow ? '0' : '1') + '">' + (u.you_follow ? 'Unfollow' : '➕ Follow') + '</button><button class="btn" data-rdm="' + esc(u.handle) + '">✉️ DM</button><button class="btn ghost" data-pblock="' + esc(u.handle) + '" data-on="' + (u.blocked ? '0' : '1') + '">' + (u.blocked ? 'Unblock' : '🚫 Block') + '</button><button class="btn ghost" data-preport="' + esc(u.handle) + '">⚑ Report</button></div>';
+      h += '<h3>Posts</h3>';
+      if (!pr.posts.length) h += '<div class="empty small">No posts yet.</div>';
+      for (const po of pr.posts) h += '<div class="tw realp"><div class="bd"><div class="hd"><span>' + rago(Date.parse(po.created_at)) + '</span>' + (po.paid ? '<span class="chip paid">💰 paid · ' + esc(po.paid) + '</span>' : '') + '</div><div class="tx">' + esc(po.text) + '</div><div class="mx small muted"><span>💬 ' + po.replies + '</span><span>🔁 ' + po.reposts + '</span><span>♥ ' + po.likes + '</span></div></div></div>';
+      return h + '<div class="mrow"><button class="btn ghost" id="pClose">Close</button></div></div>';
+    };
+    const bind = (box) => { const c = box.querySelector('#pClose'); if (c) c.onclick = closeModal; box.onclick = (ev) => { const b = ev.target.closest('[data-pfollow],[data-rdm],[data-pblock],[data-preport]'); if (b) netClick(b); }; };
+    openModal(render(), bind);
+    await N.loadUser(handle);
+    if (modalOpen && mbox.querySelector('[data-pmodal]')) { mbox.innerHTML = render(); bind(mbox); }
+  }
+  function openAccount(mode) {
+    const N = Sim.Net; if (!N) return;
+    if (N.me) {
+      openModal('<p class="kicker">// account</p><h2>🌐 @' + esc(N.me.handle) + '</h2><p class="muted">Signed in. Your profile (title, careers, followers, where you are in town) syncs to other players. Your sim save stays on this device.</p><div class="mrow"><button class="btn ghost" id="aOut">Log out</button><button class="btn green" id="aOk">Done</button></div>', (box) => {
+        box.querySelector('#aOk').onclick = closeModal;
+        box.querySelector('#aOut').onclick = async () => { await N.logout(); closeModal(); toast('Logged out. Single-player continues.', 'info'); renderPanel(true); };
+      });
+      return;
+    }
+    let login = mode === 'login';
+    const render = () => '<p class="kicker">// multiplayer</p><h2>' + (login ? 'Log in 🌐' : 'Join Web3 Sims 🌐') + '</h2>' +
+      '<p class="muted small">' + (login ? 'Welcome back.' : 'Pick a unique @handle and a password. No email, no wallet.') + '</p>' +
+      '<label class="lbl">@handle</label><input class="input" id="aH" maxlength="15" autocomplete="username" value="' + esc(login ? '' : String(S().player.handle || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 15)) + '">' +
+      '<label class="lbl" style="margin-top:.5rem;display:block">Password</label><input class="input" id="aP" type="password" maxlength="72" autocomplete="' + (login ? 'current-password' : 'new-password') + '" placeholder="6+ characters">' +
+      '<div class="small" id="aErr" style="color:var(--bad);min-height:1.2em;margin-top:.4rem"></div>' +
+      '<div class="mrow"><button class="btn ghost" id="aSwap">' + (login ? 'New here? Sign up' : 'Have an account? Log in') + '</button><button class="btn green" id="aGo">' + (login ? 'Log in' : 'Create account') + '</button></div>' +
+      '<p class="small muted">Handles: 3–15 letters, numbers or _. Passwords are hashed (bcrypt). Be nice: block & report are one tap away.</p>';
+    const bind = (box) => {
+      box.querySelector('#aSwap').onclick = () => { login = !login; box.innerHTML = render(); bind(box); };
+      const go = async () => {
+        const hEl = box.querySelector('#aH'), pEl = box.querySelector('#aP'), err = box.querySelector('#aErr');
+        const h = hEl.value.trim().replace(/^@/, ''), pw = pEl.value;
+        if (!/^[A-Za-z0-9_]{3,15}$/.test(h)) { err.textContent = N.errText('bad_handle'); return; }
+        if (pw.length < 6) { err.textContent = N.errText('bad_password'); return; }
+        const btn = box.querySelector('#aGo'); btn.disabled = true; btn.textContent = '…';
+        const r = login ? await N.login(h, pw) : await N.signup(h, pw);
+        if (r.ok) {
+          S().player.handle = r.me.handle;
+          closeModal(); toast(login ? '🌐 Logged in as @' + r.me.handle : '🌐 Welcome, @' + r.me.handle + '! You are live.', 'good');
+          renderHUD(); renderPanel(true);
+        } else { err.textContent = N.errText(r.error); btn.disabled = false; btn.textContent = login ? 'Log in' : 'Create account'; }
+      };
+      box.querySelector('#aGo').onclick = go;
+      box.querySelector('#aP').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+    };
+    openModal(render(), bind);
+  }
   function sendTyped() { const el = $('#dmInput'); if (!el || !el.value.trim()) return; SO.sendDM(dmOpen, el.value); el.value = ''; flushEvents(); renderPanel(true); const e2 = $('#dmInput'); if (e2) e2.focus(); }
 
   // ================= MODALS =================
@@ -1420,6 +1636,7 @@
       '<div><b>💸 Start from zero</b>You start with ◎0, crashing at a friend\'s place. Earn with phone jobs (raids, Discord mod, bounties), café shifts, free testnet airdrop tasks and gigs. Rent starts once you have earned ◎1.</div>' +
       '<div><b>📱 Devices</b>Apps only open on a device. Pull out your phone (📱 button, or tap your sim) for feed, DMs, gigs, wallet and small trades. Sit at your home PC for big trades, airdrop farming, coding and threads. Notifications buzz your phone; you decide when to check.</div>' +
       '<div><b>💰 Paid posts</b>Gig posts are marked #ad. Followers react over a few hours: likes, replies, and shill call-outs. Engagement moves the project\'s token; too many call-outs cost rep. NPC KOLs you follow post paid shills too. Hype them or call them out.</div>' +
+      '<div><b>🌐 Real players</b>Tap 🌐 Sign in (top bar) to make a free account. Follow real players, see their posts (paid #ads too) in your feed, like / repost / reply, DM in real time, and spot them walking around town. Real players have a blue 🌐 tag; NPCs are tagged sim.</div>' +
       '<div><b>🏠 Tap objects</b>Desk = post, farm, build, outreach. Phone = scroll, Spaces, DMs. Bed, kitchen, shower, couch keep needs up.</div>' +
       '<div><b>🚪 Go outside</b>The front door leads to town: café, Web3 Hall, club, gym, park, market, bank and your neighbors. Walk, or pay ◎0.02 for a ride.</div>' +
       '<div><b>🤝 Meet sims</b>Tap a sim for Chat, Talk crypto, Share alpha, Pitch a gig, Collab, Joke, Befriend, Flirt, Exchange handles, Space invite… or Be rude. Friend / rival / romance bars change DMs, gigs and alpha.</div>' +
@@ -1548,10 +1765,12 @@
       drawAvatar(); updateTicker(); renderHUD(); renderPanel(true);
     }
     setInterval(() => { try { updateTicker(); } catch (e) {} }, 20000);
+    if (Sim.Net) { Sim.Net.onChange = () => { renderPanelSoon(); }; try { Sim.Net.init(); } catch (e) { if (window.console) console.warn('net init failed', e); } }
     requestAnimationFrame(frame);
     window.__w3sBooted = true;
     const ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   }
-  window.__GAME = { setSpeed, setTab, requestDevice, closeDevice, get device() { return device; }, get devPending() { return devPending; }, saveGame, renderPanel, flushEvents, travel, queueAction, enterScene, get tab() { return tab; }, get char() { return char; }, get trip() { return trip; }, get pendingAct() { return pendingAct; }, scene };
+  const netBtn = $('#netBtn'); if (netBtn) netBtn.onclick = () => { const N = Sim.Net; if (N && N.status === 'online') setTab('players'); else openAccount(); };
+  window.__GAME = { setSpeed, setTab, openAccount, openPlayer, requestDevice, closeDevice, get device() { return device; }, get devPending() { return devPending; }, saveGame, renderPanel, flushEvents, travel, queueAction, enterScene, get tab() { return tab; }, get char() { return char; }, get trip() { return trip; }, get pendingAct() { return pendingAct; }, scene };
   boot();
 })();

@@ -338,3 +338,36 @@ input, select { font-family: inherit; }
 .jobs .job { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .45rem .55rem; border: 1px solid var(--line); border-radius: 10px; margin-bottom: .35rem; }
 .jobs .job button { white-space: nowrap; }
 @media (max-width: 640px) { .phonebtn { width: 42px; height: 42px; right: 8px; top: 8px; } }
+
+/* ---- multiplayer ---- */
+.tabs { grid-template-columns: repeat(10, 1fr); }
+@media (max-width: 640px) { .tabs { grid-template-columns: repeat(5, 1fr); } .tabs button { padding: .35rem 0 .3rem; } }
+.tb.net { font-size: .78rem; white-space: nowrap; }
+.tb.net span { font-family: var(--mono); }
+.tb.net.online { border-color: rgba(20,241,149,.45); color: var(--accent-2); }
+.tb.net.offline { color: var(--muted); }
+.chip.realchip { color: #7fd4ff; border-color: rgba(76,201,240,.5); background: rgba(76,201,240,.1); }
+.chip.simchip { color: #8a93a3; font-size: .58rem; }
+.av.real { background: linear-gradient(135deg, rgba(76,201,240,.35), rgba(153,69,255,.35)) !important; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(76,201,240,.6); }
+.tw.realp { border-left: 2px solid rgba(76,201,240,.6); }
+.thr.real { border-left-color: rgba(76,201,240,.6); }
+.mx.rmx { font-size: .72rem; }
+.mx .rtag { color: #7fd4ff; font-weight: 600; }
+.plink { cursor: pointer; }
+.plink:hover { text-decoration: underline; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #555; vertical-align: middle; }
+.dot.on { background: #14F195; box-shadow: 0 0 6px #14F195; }
+.netcta { border: 1px dashed rgba(76,201,240,.5); border-radius: 12px; padding: .5rem .65rem; margin-bottom: .6rem; background: rgba(76,201,240,.06); }
+.netcta.offline { border-color: var(--line); color: var(--muted); background: rgba(255,255,255,.03); }
+.onl { display: flex; flex-wrap: wrap; gap: .35rem; }
+.rrow { margin: .35rem 0 .6rem; }
+.prow .pm { cursor: pointer; }
+
+/* toasts: compact, max 2, never over open menus */
+.toast { padding: .45rem .7rem; font-size: .8rem; }
+body.menuopen .toasts { opacity: 0; visibility: hidden; transition: opacity .15s; }
+@media (max-width: 640px) {
+  .toasts { top: calc(env(safe-area-inset-top, 0px) + 6px) !important; bottom: auto !important; left: 8px !important; right: 8px; width: auto; gap: .3rem; }
+  .toast { font-size: .76rem; padding: .38rem .6rem; border-radius: 10px; }
+  .toast small { font-size: .68rem; }
+}

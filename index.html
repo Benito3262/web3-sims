@@ -14,7 +14,7 @@
   <!-- fonts load without blocking first paint; system fonts are used until (or if never) they arrive -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'" />
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" /></noscript>
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
   <script>
     /* Startup guard: shows a loading screen, and a visible "tap to reset" screen if anything throws. Plain ES5 on purpose. */
     (function () {
@@ -64,6 +64,7 @@
     </div>
     <div class="topbtns">
       <button class="tb" id="btnBuy" title="Buy mode (B)">🛒 <span>Buy</span></button>
+      <button class="tb net off" id="netBtn" title="Multiplayer">🌐 <span>Sign in</span></button>
       <button class="tb" id="btnSound" title="Notification sound">🔕</button>
       <button class="tb" id="btnHelp" title="How to play">❓</button>
       <button class="tb" id="btnReset" title="Reset save">⟲</button>
@@ -112,6 +113,7 @@
         <button data-tab="farm">🪂<span>Farm</span><em id="bFarm"></em></button>
         <button data-tab="nft">🖼️<span>NFTs</span><em id="bNft"></em></button>
         <button data-tab="wallet">👛<span>Wallet</span></button>
+        <button data-tab="players">🌐<span>Players</span><em id="bPlayers"></em></button>
         <button data-tab="town">🗺️<span>Town</span></button>
         <button data-tab="life">🏆<span>Life</span></button>
       </nav>
@@ -127,15 +129,16 @@
   <div id="toasts" class="toasts"></div>
   <div id="modal" class="modal" hidden><div class="mbox" id="mbox"></div></div>
 
-  <script src="compat.js?v=4"></script>
-  <script src="sim.js?v=4"></script>
-  <script src="market.js?v=4"></script>
-  <script src="airdrop.js?v=4"></script>
-  <script src="nft.js?v=4"></script>
-  <script src="social.js?v=4"></script>
-  <script src="world.js?v=4"></script>
-  <script src="townview.js?v=4"></script>
-  <script src="life.js?v=4"></script>
-  <script src="ui.js?v=4"></script>
+  <script src="compat.js?v=5"></script>
+  <script src="sim.js?v=5"></script>
+  <script src="market.js?v=5"></script>
+  <script src="airdrop.js?v=5"></script>
+  <script src="nft.js?v=5"></script>
+  <script src="social.js?v=5"></script>
+  <script src="world.js?v=5"></script>
+  <script src="townview.js?v=5"></script>
+  <script src="life.js?v=5"></script>
+  <script src="net.js?v=5"></script>
+  <script src="ui.js?v=5"></script>
 </body>
 </html>
