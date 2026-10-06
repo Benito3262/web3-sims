@@ -2,7 +2,7 @@
 
 A Sims-style browser life sim for Web3 grinders. Farm airdrops, trade a news-driven fake market, mint and flip NFTs, grind Crypto Twitter, land SOL gigs, pay rent, and move from a studio to a Dubai villa.
 
-**Play:** https://web3-sims.vercel.app
+**Play:** https://web3sims.vercel.app
 
 - Static HTML/CSS/JS, no build step, no backend. Progress saves to `localStorage`.
 - Fake money only (no wallet connection, no real crypto).
