@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Web3 Sims: live the onchain grinder life</title>
   <meta name="description" content="Web3 Sims: a browser life sim for crypto grinders. Farm airdrops, trade a fake market, mint NFTs, post on CT, land gigs and earn (fake) SOL." />
   <meta property="og:title" content="Web3 Sims" />
@@ -11,10 +11,42 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💎</text></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <!-- fonts load without blocking first paint; system fonts are used until (or if never) they arrive -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'" />
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" /></noscript>
+  <link rel="stylesheet" href="styles.css?v=2" />
+  <script>
+    /* Startup guard: shows a loading screen, and a visible "tap to reset" screen if anything throws. Plain ES5 on purpose. */
+    (function () {
+      var SAVE_KEY = 'ctsim.v1';
+      window.__w3sBooted = false;
+      function el(id) { return document.getElementById(id); }
+      window.__w3sReset = function () {
+        try { var raw = localStorage.getItem(SAVE_KEY); if (raw) localStorage.setItem(SAVE_KEY + '.backup', raw); localStorage.removeItem(SAVE_KEY); } catch (e) {}
+        location.reload();
+      };
+      window.__w3sFatal = function (msg) {
+        var f = el('fatal'); if (!f) return;
+        var m = el('fatalMsg'); if (m) m.textContent = String(msg || 'Unknown error').slice(0, 220);
+        f.className = window.__w3sBooted ? 'fatal banner' : 'fatal'; f.removeAttribute('hidden');
+        var l = el('loader'); if (l) l.style.display = 'none';
+      };
+      window.onerror = function (msg, src, line, col) {
+        if (!src && /^Script error/i.test(String(msg))) return false; /* injected in-app-browser scripts, not ours */
+        window.__w3sFatal(msg + (line ? ' (line ' + line + ')' : ''));
+        return false;
+      };
+      setTimeout(function () {
+        if (window.__w3sBooted) return;
+        var t = el('loaderTxt'); if (t) t.innerHTML = 'Still loading… slow network? <button class="btn sm" onclick="location.reload()">Tap to reload</button>';
+      }, 12000);
+    })();
+  </script>
 </head>
 <body>
+  <div id="loader" class="loader"><div class="lgem">💎</div><b>WEB3 SIMS</b><span id="loaderTxt">Loading your sim…</span></div>
+  <div id="fatal" class="fatal" hidden><div class="fbox"><div style="font-size:2rem">🫠</div><h2>Something broke</h2><p>Sorry ser. Tap reset to start fresh (your old save is backed up), or reload to try again.</p><p class="small mono" id="fatalMsg"></p><div class="mrow"><button class="btn ghost" onclick="location.reload()">Reload</button><button class="btn red" onclick="__w3sReset()">Tap to reset</button></div></div></div>
+  <noscript><div class="fatal"><div class="fbox"><h2>JavaScript is off</h2><p>Web3 Sims needs JavaScript. Open this link in Chrome or Safari.</p></div></div></noscript>
   <div class="noise"></div>
   <header class="top">
     <div class="brand"><span class="gem"></span><span>WEB3 SIMS</span></div>
@@ -92,11 +124,12 @@
   <div id="toasts" class="toasts"></div>
   <div id="modal" class="modal" hidden><div class="mbox" id="mbox"></div></div>
 
-  <script src="sim.js"></script>
-  <script src="market.js"></script>
-  <script src="airdrop.js"></script>
-  <script src="nft.js"></script>
-  <script src="social.js"></script>
-  <script src="ui.js"></script>
+  <script src="compat.js?v=2"></script>
+  <script src="sim.js?v=2"></script>
+  <script src="market.js?v=2"></script>
+  <script src="airdrop.js?v=2"></script>
+  <script src="nft.js?v=2"></script>
+  <script src="social.js?v=2"></script>
+  <script src="ui.js?v=2"></script>
 </body>
 </html>

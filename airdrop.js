@@ -36,7 +36,7 @@
     const used = new Set(A.protos.map((p) => p.sym).concat(A.claimed.map((c) => c.sym)));
     const Mk = Sim.Market && Sim.Market.M;
     let pool = PROTO_POOL.filter((p) => !used.has(p.sym) && !(Mk && Mk.tokens[p.sym]));
-    if (!pool.length) pool = PROTO_POOL.map((p) => ({ ...p, name: p.name + ' S' + (A.season + 1), sym: p.sym + (A.season + 1) })).filter((p) => !used.has(p.sym));
+    if (!pool.length) pool = PROTO_POOL.map((p) => Object.assign({}, p, { name: p.name + ' S' + (A.season + 1), sym: p.sym + (A.season + 1) })).filter((p) => !used.has(p.sym));
     const b = pick(pool);
     const start = S.t;
     const snap = start + Math.round((offsetDays || 0) * 1440 + rand(3, 5) * 1440);

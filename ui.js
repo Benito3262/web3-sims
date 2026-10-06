@@ -965,33 +965,60 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
 
   const MIN_PER_SEC = 5;
-  let last = performance.now(), saveT = 0, hudT = 0;
+  let last = performance.now(), saveT = 0, hudT = 0, loopErrs = 0;
   function frame(now) {
-    const dt = Math.min(0.25, (now - last) / 1000); last = now;
-    if (S()) {
-      if (!modalOpen && speed > 0 && !S().pending) Sim.tick(dt * MIN_PER_SEC * speed);
-      if (S().pending && !modalOpen) showDrainer();
-      updateChar(dt);
-      flushEvents();
-      drawRoom(now);
-      hudT += dt; saveT += dt;
-      if (hudT > 0.15) { hudT = 0; renderHUD(); }
-      const stale = now - lastPanelRender > (tab === 'market' || tab === 'farm' || tab === 'nft' ? 1500 : 3000);
-      const typing = document.activeElement && panel.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
-      if ((panelDirty || stale) && !(typing && !panelDirty) && now - lastPanelRender > 250) renderPanel();
-      if (saveT > 5) { saveT = 0; saveGame(); }
+    try {
+      const dt = Math.min(0.25, Math.max(0, (now - last) / 1000)); last = now;
+      if (S()) {
+        if (!modalOpen && speed > 0 && !S().pending) Sim.tick(dt * MIN_PER_SEC * speed);
+        if (S().pending && !modalOpen) showDrainer();
+        updateChar(dt);
+        flushEvents();
+        drawRoom(now);
+        hudT += dt; saveT += dt;
+        if (hudT > 0.15) { hudT = 0; renderHUD(); }
+        const stale = now - lastPanelRender > (tab === 'market' || tab === 'farm' || tab === 'nft' || tab === 'town' ? 1500 : 3000);
+        const typing = document.activeElement && panel.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
+        if ((panelDirty || stale) && !(typing && !panelDirty) && now - lastPanelRender > 250) renderPanel();
+        if (saveT > 5) { saveT = 0; saveGame(); }
+      }
+      loopErrs = 0;
+    } catch (e) {
+      loopErrs++;
+      if (window.console) console.error(e);
+      if (loopErrs === 30 && window.__w3sFatal) window.__w3sFatal((e && e.message) || String(e));
     }
     requestAnimationFrame(frame);
   }
 
+  function backupBadSave(raw) {
+    try { localStorage.setItem(Sim.SAVE_KEY + '.backup', raw); localStorage.removeItem(Sim.SAVE_KEY); } catch (e) {}
+  }
+  function startFresh() { Sim.newGame(); showCreate(); }
   function boot() {
-    let loaded = null;
-    try { const raw = localStorage.getItem(Sim.SAVE_KEY); if (raw) loaded = Sim.load(raw); } catch (e) {}
-    if (!loaded) { Sim.newGame(); showCreate(); }
-    else toast('👋 Welcome back, @' + S().player.handle + '. Save loaded.', 'good');
-    drawAvatar(); updateTicker(); renderHUD(); renderPanel(true);
-    setInterval(updateTicker, 20000);
+    let loaded = null, raw = null;
+    try { raw = localStorage.getItem(Sim.SAVE_KEY); } catch (e) { raw = null; }
+    if (raw) {
+      try { loaded = Sim.load(raw); } catch (e) { loaded = null; }
+      if (!loaded) { backupBadSave(raw); toast('Your old save could not be read, so it was backed up and a fresh sim started.', 'bad'); }
+    }
+    try {
+      if (!loaded) startFresh();
+      else toast('👋 Welcome back, @' + S().player.handle + '. Save loaded.', 'good');
+      if (window.__World) window.__World.afterLoad(!loaded);
+      drawAvatar(); updateTicker(); renderHUD(); renderPanel(true);
+    } catch (e) {
+      if (!loaded) throw e;
+      if (window.console) console.warn('save broke the UI, starting fresh', e);
+      backupBadSave(raw);
+      closeModal(); startFresh();
+      if (window.__World) window.__World.afterLoad(true);
+      drawAvatar(); updateTicker(); renderHUD(); renderPanel(true);
+    }
+    setInterval(() => { try { updateTicker(); } catch (e) {} }, 20000);
     requestAnimationFrame(frame);
+    window.__w3sBooted = true;
+    const ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   }
   window.__GAME = { setSpeed, setTab, saveGame, renderPanel, flushEvents, get tab() { return tab; } };
   boot();

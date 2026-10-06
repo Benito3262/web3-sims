@@ -202,7 +202,14 @@
     try {
       const data = typeof json === 'string' ? JSON.parse(json) : json;
       if (!data || data.v !== 1) return null;
+      if (!data.player || typeof data.player !== 'object') return null;
       const base = freshState(data.player);
+      // drop fields whose type does not match (old/corrupted saves); modules re-init missing state
+      for (const k of Object.keys(data)) {
+        const v = data[k], b = base[k];
+        if (b !== undefined && b !== null && v !== null && (typeof v !== typeof b || Array.isArray(v) !== Array.isArray(b))) delete data[k];
+        else if (b === undefined && (v === null || typeof v !== 'object')) delete data[k];
+      }
       S = Object.assign(base, data);
       S.needs = Object.assign(base.needs, data.needs);
       S.stats = Object.assign(freshState().stats, data.stats);
