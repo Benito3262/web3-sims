@@ -33,19 +33,37 @@
     return null;
   }
   const char = { x: 5.5, y: 5.5, path: [], face: 1, bob: 0, walking: false };
-  let pendingAct = null; // {id, obj}
+  let pendingAct = null; // {id, obj, label, emoji, npc}
+  let trip = null;       // {dest: 'home'|'town'|lotId, ride: bool}
   let speed = 1, modalOpen = false;
+  const W = Sim.World, TV = window.TownView;
+  const WS = () => S().world;
+  function scene() { const st = S(); return st && st.world ? st.world.scene : 'home'; }
+  function placeName(sc) { return sc === 'home' ? 'home' : sc === 'town' ? 'town' : (W.LOTS[sc] ? W.LOTS[sc].name : sc); }
+  function grid(sc) {
+    sc = sc || scene();
+    if (sc === 'town') return { cols: W.TW, rows: W.TH, tile: W.TT, top: 0, blocked: (x, y) => !W.walkable(x, y) };
+    if (sc === 'home') return { cols: COLS, rows: ROWS, tile: T, top: WALL, blocked: (x, y) => blocked.has(x + ',' + y) };
+    const D = TV.INTERIORS[sc]; return { cols: 12, rows: 9, tile: T, top: WALL, blocked: (x, y) => D.blocked.has(x + ',' + y) };
+  }
+  function sceneObjs(sc) { sc = sc || scene(); if (sc === 'home') return OBJ; if (sc === 'town') return {}; return TV.INTERIORS[sc].objs; }
+  function objAtScene(tx, ty) {
+    const objs = sceneObjs();
+    for (const k in objs) { const o = objs[k]; if (o.tiles.some(([x, y]) => x === tx && y === ty)) return o.alias || k; }
+    return null;
+  }
 
   function bfs(sx, sy, tx, ty) {
+    const g = grid();
     const key = (x, y) => x + ',' + y;
     if (sx === tx && sy === ty) return [];
-    const q = [[sx, sy]], prev = new Map([[key(sx, sy), null]]);
-    while (q.length) {
-      const [x, y] = q.shift();
+    const q = [[sx, sy]], prev = new Map([[key(sx, sy), null]]); let qi = 0;
+    while (qi < q.length) {
+      const [x, y] = q[qi++];
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = x + dx, ny = y + dy, k = key(nx, ny);
-        if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS || prev.has(k)) continue;
-        if (blocked.has(k) && !(nx === tx && ny === ty)) continue;
+        if (nx < 0 || ny < 0 || nx >= g.cols || ny >= g.rows || prev.has(k)) continue;
+        if (g.blocked(nx, ny) && !(nx === tx && ny === ty)) continue;
         prev.set(k, [x, y]);
         if (nx === tx && ny === ty) {
           const path = []; let c = [nx, ny];
@@ -58,48 +76,151 @@
     return null;
   }
   function walkTo(tx, ty) {
-    const sx = Math.floor(char.x), sy = Math.floor(char.y);
-    const p = bfs(clampI(sx, 0, COLS - 1), clampI(sy, 0, ROWS - 1), tx, ty);
+    const g = grid();
+    const sx = clampI(Math.floor(char.x), 0, g.cols - 1), sy = clampI(Math.floor(char.y), 0, g.rows - 1);
+    const p = scene() === 'town' ? W.townPath(sx, sy, tx, ty) : bfs(sx, sy, clampI(tx, 0, g.cols - 1), clampI(ty, 0, g.rows - 1));
     if (p === null) return false;
     char.path = p; return true;
   }
   const clampI = (v, a, b) => Math.max(a, Math.min(b, v));
+  const atTile = (sp) => Math.floor(char.x) === sp[0] && Math.floor(char.y) === sp[1];
 
-  function queueAction(id) {
+  // where does an action happen?
+  function homeRemoteOK(id, obj) { return obj === 'phone' || (obj === 'desk' && id !== 'games'); }
+  function targetFor(pa) {
+    const obj = pa.obj;
+    if (obj === 'npc') return { scene: scene(), npc: pa.npc };
+    const i = obj.indexOf(':');
+    if (i > 0) {
+      const loc = obj.slice(0, i), key = obj.slice(i + 1);
+      if (loc === 'park') return { scene: 'town', spot: W.PARK_SPOTS[key] };
+      return { scene: loc, spot: TV.INTERIORS[loc].objs[key].spot };
+    }
+    return { scene: 'home', spot: (OBJ[obj] || OBJ.desk).spot };
+  }
+  function npcPos(id) {
+    const sc = scene(); const n = WS().npcs[id]; if (!n) return null;
+    if (sc === 'town') return W.npcsInTown().indexOf(id) >= 0 ? [n.x, n.y] : null;
+    if (sc === 'home') return null;
+    const list = W.npcsAt(sc); const i = list.indexOf(id); if (i < 0) return null;
+    return TV.npcSlotPos(sc, list, i, 0);
+  }
+  function clearTalk() { const w = WS(); if (w) { w.approach = null; if (!(S().action && String(S().action.id).indexOf('soc_') === 0)) w.talkTo = null; } }
+
+  function queueAction(id, extra) {
+    extra = extra || {};
     const info = Sim.actionInfo(id);
     if (!info) return;
-    if (Sim.check(id)) { flushEvents(); return; }
+    if (info.obj === 'npc') { WS().talkTo = extra.npc; }
+    if (Sim.check(id)) { flushEvents(); if (info.obj === 'npc') WS().talkTo = null; return; }
     if (S().action && S().action.id === 'passout') { toast('You are passed out. Let them sleep.', 'bad'); return; }
-    if (S().action) Sim.cancelAction();
+    if (S().action) { leaveSeat(); Sim.cancelAction(); }
     leaveSeat();
-    const o = OBJ[info.obj];
-    pendingAct = { id, obj: info.obj, label: info.label, emoji: info.emoji };
-    walkTo(o.spot[0], o.spot[1]);
     closeMenu();
+    const sc = scene();
+    if (sc !== 'home' && info.obj.indexOf(':') < 0 && info.obj !== 'npc' && homeRemoteOK(id, info.obj)) {
+      // do it right here on your phone / laptop (slower unless you are at the café)
+      pendingAct = null; trip = null; char.path = []; clearTalk();
+      Sim.startAction(id, { remote: true, minsMult: sc === 'cafe' ? 1 : 1.25 });
+      flushEvents(); renderPanelSoon();
+      return;
+    }
+    pendingAct = { id, obj: info.obj, label: info.label, emoji: info.emoji, npc: extra.npc || null };
+    if (info.obj === 'npc') { WS().approach = extra.npc; WS().talkTo = extra.npc; }
+    char.path = [];
+    const tg = targetFor(pendingAct);
+    trip = tg.scene !== sc ? { dest: tg.scene, ride: !!extra.ride } : null;
+    if (trip && !trip.ride) toast('🚶 Heading to ' + placeName(tg.scene) + ' → ' + info.label, 'info');
+    if (speed === 0) toast('Game is paused. Press ▶ 1x to let your sim move.', 'info');
+  }
+  function travel(dest, ride) {
+    if (S().action && S().action.id === 'passout') return;
+    if (S().action) { leaveSeat(); Sim.cancelAction(); }
+    pendingAct = null; char.path = []; clearTalk(); closeMenu();
+    if (dest === scene()) return;
+    trip = { dest, ride: !!ride };
     if (speed === 0) toast('Game is paused. Press ▶ 1x to let your sim move.', 'info');
   }
   function leaveSeat() {
     const a = S().action;
-    if (a && a.obj && OBJ[a.obj]) { const sp = OBJ[a.obj].spot; char.x = sp[0] + 0.5; char.y = sp[1] + 0.5; }
+    if (a && a.obj && !a.remote && scene() === 'home' && OBJ[a.obj]) { const sp = OBJ[a.obj].spot; char.x = sp[0] + 0.5; char.y = sp[1] + 0.5; }
+  }
+  function enterScene(sc, how) {
+    const prev = W.setScene(sc);
+    closeMenu(); char.path = [];
+    if (sc === 'town') {
+      const L = W.LOTS[prev];
+      const d = how === 'ride' ? [12, 7] : (L && L.door) || W.LOTS.home.door;
+      char.x = d[0] + 0.5; char.y = d[1] + 0.5;
+    } else if (sc === 'home') { char.x = 3.5; char.y = 7.5; }
+    else { char.x = 6.5; char.y = 7.5; }
+    flushEvents(); renderPanelSoon();
+  }
+  function stepTrip() {
+    const sc = scene(), dest = trip.dest;
+    if (sc === dest) { trip = null; return; }
+    if (trip.ride) {
+      trip.ride = false;
+      if (W.takeRide(dest)) { enterScene(dest, 'ride'); trip = null; }
+      else { trip = null; pendingAct = null; clearTalk(); }
+      flushEvents();
+      return;
+    }
+    if (sc !== 'town') {
+      const ex = sc === 'home' ? OBJ.door.spot : [6, 8];
+      if (atTile(ex)) enterScene('town', 'walk');
+      else if (!walkTo(ex[0], ex[1])) { trip = null; pendingAct = null; }
+      return;
+    }
+    if (dest === 'town') { trip = null; return; }
+    const L = W.LOTS[dest]; const door = L.door;
+    if (!door) { trip = null; return; }
+    if (atTile(door)) {
+      if (L.kind !== 'home' && !W.isOpen(dest)) { toast(L.emoji + ' ' + L.name + ' is closed right now (' + W.hoursLabel(dest) + ').', 'bad'); trip = null; pendingAct = null; return; }
+      enterScene(dest, 'walk'); trip = null;
+    } else if (!walkTo(door[0], door[1])) { trip = null; pendingAct = null; }
   }
 
   function updateChar(dtReal) {
     const st = S();
     char.walking = false;
-    if (st.action) return;
-    if (char.path.length && speed > 0) {
-      const sp = 3.4 * Math.min(speed, 2.5) * dtReal;
+    if (st.action) {
+      if (st.action.id === 'passout' && scene() !== 'home') { enterScene('home', 'ride'); toast('🚑 You passed out in town. A kind stranger dropped you home.', 'bad'); trip = null; pendingAct = null; }
+      return;
+    }
+    if (speed <= 0) return;
+    if (char.path.length) {
+      const tilesPerSec = scene() === 'town' ? 5.5 : 3.4;
+      const sp = tilesPerSec * Math.min(speed, 2.5) * dtReal;
       const [nx, ny] = char.path[0];
       const dx = nx - char.x, dy = ny - char.y, d = Math.hypot(dx, dy);
       if (dx) char.face = Math.sign(dx);
       if (d <= sp) { char.x = nx; char.y = ny; char.path.shift(); } else { char.x += dx / d * sp; char.y += dy / d * sp; }
       char.walking = true; char.bob += dtReal * 14;
+      return;
     }
-    if (!char.path.length && pendingAct) {
-      const o = OBJ[pendingAct.obj];
-      const at = Math.floor(char.x) === o.spot[0] && Math.floor(char.y) === o.spot[1];
-      if (at) { const id = pendingAct.id; pendingAct = null; Sim.startAction(id); flushEvents(); renderPanelSoon(); }
-      else if (!walkTo(o.spot[0], o.spot[1])) pendingAct = null;
+    if (trip) { stepTrip(); return; }
+    if (pendingAct) {
+      const tg = targetFor(pendingAct);
+      if (tg.scene !== scene()) { trip = { dest: tg.scene, ride: false }; return; }
+      if (pendingAct.obj === 'npc') {
+        const p = npcPos(pendingAct.npc);
+        if (!p) { toast('They walked off before you got there.', 'info'); pendingAct = null; clearTalk(); WS().talkTo = null; return; }
+        if (Math.hypot(p[0] - char.x, p[1] - char.y) < 1.6) {
+          const id = pendingAct.id; pendingAct = null; WS().approach = null;
+          char.face = p[0] >= char.x ? 1 : -1;
+          if (!Sim.startAction(id)) WS().talkTo = null;
+          flushEvents(); renderPanelSoon();
+        } else {
+          const tx = Math.floor(p[0]), ty = Math.floor(p[1]);
+          const g = grid(); const cands = [[tx, ty + 1], [tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty]].filter(([x, y]) => x >= 0 && y >= 0 && x < g.cols && y < g.rows && !g.blocked(x, y));
+          let ok = false; for (const c of cands) if (walkTo(c[0], c[1])) { ok = true; break; }
+          if (!ok) { pendingAct = null; clearTalk(); }
+        }
+        return;
+      }
+      if (atTile(tg.spot)) { const id = pendingAct.id; pendingAct = null; Sim.startAction(id); flushEvents(); renderPanelSoon(); }
+      else if (!walkTo(tg.spot[0], tg.spot[1])) pendingAct = null;
     }
   }
 
@@ -129,6 +250,12 @@
   }
 
   function drawRoom(time) {
+    const sc = scene();
+    if (sc === 'town') return drawTownScene(time);
+    if (sc !== 'home') return drawInteriorScene(sc, time);
+    drawHome(time);
+  }
+  function drawHome(time) {
     const st = S(); const it = st.items; const home = Sim.HOMES[st.home.tier];
     const m = Sim.minOfDay();
     cx.clearRect(0, 0, cv.width, cv.height);
@@ -312,98 +439,269 @@
     cx.restore();
   }
   function drawChar(time) {
-    const st = S(); const a = st.action;
+    const st = S(); const a = st.action; const sc = scene();
     if (a && a.outside) return;
     let x = char.x, y = char.y, lying = false, sleep = false;
-    if (a && a.obj && OBJ[a.obj] && OBJ[a.obj].sit) { [x, y] = OBJ[a.obj].sit; }
-    if (a && (a.id === 'sleep' || a.id === 'nap')) { lying = true; sleep = true; x = 10.5; y = 1.2; }
+    if (sc === 'home' && a && !a.remote) {
+      if (a.obj && OBJ[a.obj] && OBJ[a.obj].sit) { [x, y] = OBJ[a.obj].sit; }
+      if (a.id === 'sleep' || a.id === 'nap') { lying = true; sleep = true; x = 10.5; y = 1.2; }
+    }
     if (a && a.id === 'passout') { lying = true; sleep = true; }
-    const bob = char.walking ? Math.abs(Math.sin(char.bob)) * 3 : 0;
-    const X = x * T, Y = WALL + y * T - bob;
-    drawPerson(cx, X, Y, 1.25, { lying, sleep, face: char.face * 1.2 });
-    if (!lying || a.id !== 'passout') drawPlumbob(X, Y - (lying ? 40 : 52), time);
+    const g = grid(); const k = sc === 'town' ? 0.62 : 1;
+    const bob = char.walking ? Math.abs(Math.sin(char.bob)) * 3 * k : 0;
+    const X = x * g.tile, Y = g.top + y * g.tile - bob;
+    drawPerson(cx, X, Y, 1.25 * k, { lying, sleep, face: char.face * 1.2 });
+    cx.save(); cx.translate(X, Y); cx.scale(k, k);
+    if (!lying || a.id !== 'passout') drawPlumbob(0, -(lying ? 40 : 52), time);
     if (a) {
-      const bx = X + 26, by = Y - 38;
+      const bx = 26, by = -38;
       rr(bx - 15, by - 15, 30, 30, 15, 'rgba(255,255,255,.92)');
       cx.fillStyle = 'rgba(255,255,255,.92)'; cx.beginPath(); cx.moveTo(bx - 10, by + 8); cx.lineTo(bx - 18, by + 18); cx.lineTo(bx - 3, by + 12); cx.fill();
       emo(sleep ? '💤' : a.emoji, bx, by + 1, 17);
-    } else if (pendingAct) {
-      emo('💭', X + 24, Y - 36, 18);
+    } else if (pendingAct || trip) {
+      emo('💭', 24, -36, 18);
+    }
+    cx.restore();
+  }
+  // ---- outside scenes ----
+  const G = { cx, rr, emo, T, WALL, shade: (h, a) => shade(h, a) };
+  function drawNPC(id, X, Y, k, time, labels) {
+    const P = W.personInfo(id); if (!P) return;
+    const n = WS().npcs[id] || {};
+    const walking = !!n.dest;
+    const bob = walking ? Math.abs(Math.sin(time / 90 + id.length)) * 2 * k : 0;
+    drawPerson(cx, X, Y - bob, 1.15 * k, { player: { color: P.color, hat: P.hat }, face: (n.face || 0) * 1.2 });
+    cx.save(); cx.translate(X, Y - bob); cx.scale(k, k);
+    emo(P.av, 0, -44, 16);
+    if (labels) {
+      const label = P.met ? P.name.split(' ')[0] : '???';
+      cx.font = '600 11px "Space Grotesk",system-ui,sans-serif'; const w = cx.measureText(label).width + 10;
+      rr(-w / 2, 20, w, 15, 7, P.rival >= 50 ? 'rgba(255,92,122,.85)' : P.romance >= 60 ? 'rgba(255,92,168,.85)' : P.met ? 'rgba(20,20,26,.8)' : 'rgba(60,60,70,.7)');
+      cx.fillStyle = '#fff'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(label, 0, 28);
+    }
+    if (WS().talkTo === id && S().action && String(S().action.id).indexOf('soc_') === 0) emo('💬', 18, -40, 16);
+    cx.restore();
+  }
+  function drawTownScene(time) {
+    const m = Sim.minOfDay(); const na = nightAlpha(m);
+    TV.drawTown(G, time, na > 0.2);
+    const ids = W.npcsInTown();
+    const items = ids.map((id) => ({ id, y: WS().npcs[id].y })).concat([{ me: true, y: char.y }]).sort((a, b) => a.y - b.y);
+    for (const it of items) {
+      if (it.me) drawChar(time);
+      else { const n = WS().npcs[it.id]; drawNPC(it.id, n.x * W.TT, n.y * W.TT, 0.62, time, true); }
+    }
+    if (na > 0) TV.drawTownLights(G, na * 0.8);
+    if (hoverLot) { const L = W.LOTS[hoverLot]; cx.save(); cx.strokeStyle = 'rgba(20,241,149,.8)'; cx.lineWidth = 2; cx.setLineDash([6, 4]); cx.strokeRect(L.x * W.TT, L.y * W.TT, L.w * W.TT, L.h * W.TT); cx.restore(); }
+  }
+  function drawInteriorScene(sc, time) {
+    TV.drawInterior(G, sc, time);
+    const list = W.npcsAt(sc);
+    const items = list.map((id, i) => { const p = TV.npcSlotPos(sc, list, i, time); return { id, x: p[0], y: p[1] }; }).concat([{ me: true, y: char.y }]).sort((a, b) => a.y - b.y);
+    for (const it of items) { if (it.me) drawChar(time); else drawNPC(it.id, it.x * T, WALL + it.y * T, 1, time, true); }
+    if (hoverObj && sceneObjs()[hoverObj]) {
+      cx.save(); cx.strokeStyle = 'rgba(20,241,149,.7)'; cx.lineWidth = 2; cx.setLineDash([6, 4]);
+      for (const [x, y] of sceneObjs()[hoverObj].tiles) cx.strokeRect(x * T + 2, WALL + y * T + 2, T - 4, T - 4);
+      cx.restore();
     }
   }
 
   // ---- input on canvas ----
-  let hoverObj = null;
+  let hoverObj = null, hoverLot = null;
   function canvasTile(ev) {
     const r = cv.getBoundingClientRect();
     const sx = cv.width / r.width, sy = cv.height / r.height;
     const x = (ev.clientX - r.left) * sx, y = (ev.clientY - r.top) * sy;
-    return { x, y, tx: Math.floor(x / T), ty: Math.floor((y - WALL) / T), cssX: ev.clientX - r.left, cssY: ev.clientY - r.top };
+    const g = grid();
+    return { x, y, fx: x / g.tile, fy: (y - g.top) / g.tile, tx: Math.floor(x / g.tile), ty: Math.floor((y - g.top) / g.tile), cssX: ev.clientX - r.left, cssY: ev.clientY - r.top };
   }
+  function onMe(p) { const g = grid(); const r = scene() === 'town' ? 1.1 : 0.55; return Math.hypot(p.fx - char.x, p.fy - (char.y - (scene() === 'town' ? 0.3 : 0.2))) < r + (g.tile < 30 ? 0.3 : 0); }
+  function npcHit(p) {
+    const sc = scene(); let best = null, bd = sc === 'town' ? 1.4 : 0.75;
+    let pts = [];
+    if (sc === 'town') pts = W.npcsInTown().map((id) => [id, WS().npcs[id].x, WS().npcs[id].y - 0.4]);
+    else if (sc !== 'home') { const list = W.npcsAt(sc); pts = list.map((id, i) => { const q = TV.npcSlotPos(sc, list, i, performance.now()); return [id, q[0], q[1] - 0.2]; }); }
+    for (const [id, x, y] of pts) { const d = Math.hypot(p.fx - x, p.fy - y); if (d < bd) { bd = d; best = id; } }
+    return best;
+  }
+  function parkSpotAt(p) { for (const k in W.PARK_SPOTS) { const s2 = W.PARK_SPOTS[k]; if (Math.hypot(p.fx - (s2[0] + 0.5), p.fy - (s2[1] + 0.5)) < 1.2) return k; } return null; }
   cv.addEventListener('mousemove', (ev) => {
-    const p = canvasTile(ev);
-    let o = p.ty >= 0 ? objAt(p.tx, p.ty) : null;
-    if (o && OBJ[o] && OBJ[o].deco) o = null;
-    const onChar = Math.hypot(p.x - char.x * T, p.y - (WALL + char.y * T)) < 22;
-    hoverObj = onChar ? null : o;
-    cv.style.cursor = o || onChar ? 'pointer' : 'crosshair';
+    const p = canvasTile(ev); const sc = scene();
+    hoverObj = null; hoverLot = null;
+    if (sc === 'town') {
+      const l = W.lotAt(p.tx, p.ty); if (l && l !== 'park') hoverLot = l;
+      cv.style.cursor = l || npcHit(p) || onMe(p) || parkSpotAt(p) ? 'pointer' : 'crosshair';
+      return;
+    }
+    let o = p.ty >= 0 ? objAtScene(p.tx, p.ty) : null;
+    const objs = sceneObjs();
+    if (o && objs[o] && objs[o].deco) o = null;
+    const me = onMe(p);
+    hoverObj = me ? null : o;
+    cv.style.cursor = o || me || npcHit(p) ? 'pointer' : 'crosshair';
   });
-  cv.addEventListener('mouseleave', () => { hoverObj = null; });
+  cv.addEventListener('mouseleave', () => { hoverObj = null; hoverLot = null; });
+  function walkHere(p) {
+    closeMenu();
+    const st = S();
+    if (st.action) { if (st.action.id === 'passout') return; leaveSeat(); Sim.cancelAction(); }
+    pendingAct = null; trip = null; clearTalk();
+    const g = grid();
+    walkTo(clampI(p.tx, 0, g.cols - 1), clampI(p.ty, 0, g.rows - 1));
+  }
   cv.addEventListener('click', (ev) => {
     if (modalOpen) return;
     const p = canvasTile(ev);
-    const st = S();
+    const st = S(); const sc = scene();
     if (st.action && st.action.outside) { openMenuFor(st.action.obj || 'door', p); return; }
-    const onChar = !st.action && Math.hypot(p.x - char.x * T, p.y - (WALL + char.y * T)) < 22;
-    if (onChar) { openMenuFor('phone', p, true); return; }
+    if (onMe(p) && !(st.action && st.action.id === 'passout')) { openMenuFor('phone', p, true); return; }
+    if (sc === 'town') {
+      const npc = npcHit(p); if (npc) { openNpcMenu(npc, p); return; }
+      const ps = parkSpotAt(p); if (ps) { openMenuFor('park:' + ps, p); return; }
+      const lot = W.lotAt(p.tx, p.ty);
+      if (lot === 'park') { openParkMenu(p); return; }
+      if (lot) { openLotMenu(lot, p); return; }
+      walkHere(p); return;
+    }
+    if (sc !== 'home') {
+      const npc = npcHit(p); if (npc) { openNpcMenu(npc, p); return; }
+      if (p.ty < 0) { closeMenu(); return; }
+      let o = objAtScene(p.tx, p.ty); const objs = sceneObjs();
+      if (o && objs[o].deco) o = null;
+      if (o === 'exit') { openExitMenu(p); return; }
+      if (o) { openMenuFor(sc + ':' + o, p); return; }
+      walkHere(p); return;
+    }
     if (p.ty < 0) { closeMenu(); return; }
     let o = objAt(p.tx, p.ty);
     if (o && OBJ[o] && OBJ[o].deco) o = null;
     if (o) { openMenuFor(o, p); return; }
-    closeMenu();
-    if (st.action) { if (st.action.id === 'passout') return; leaveSeat(); Sim.cancelAction(); }
-    pendingAct = null;
-    walkTo(clampI(p.tx, 0, COLS - 1), clampI(p.ty, 0, ROWS - 1));
+    walkHere(p);
   });
 
   const menu = $('#menu');
-  function openMenuFor(obj, p, fromChar) {
-    const acts = Sim.actionsFor(obj);
-    const title = fromChar ? '📱 Your phone' : OBJ[obj].name;
-    let html = '<h4><span>' + esc(title) + '</span><span class="mono">' + esc(Sim.fmtClock()) + '</span></h4>';
-    let grp = null;
+  function objName(obj) {
+    const i = obj.indexOf(':');
+    if (i > 0) { const loc = obj.slice(0, i), key = obj.slice(i + 1); if (loc === 'park') return '🌳 Park · ' + ({ bench: 'Bench', grass: 'Grass', jog: 'Jog path', pond: 'Duck pond' }[key] || key); const L = W.LOTS[loc]; return L.emoji + ' ' + TV.INTERIORS[loc].objs[key].name; }
+    return OBJ[obj] ? OBJ[obj].name : obj;
+  }
+  function actButtons(acts, npc) {
+    let html = '', grp = null;
     for (const a of acts) {
       if (a.group !== grp) { grp = a.group; if (grp) html += '<div class="grp">' + esc(grp) + '</div>'; }
       const meta = Sim.fmtDur(a.mins) + (a.cost ? ' · ◎' + a.cost : '');
-      html += '<button data-qa="' + a.id + '"' + (a.disabled ? ' disabled title="' + esc(a.disabled) + '"' : '') + '><span class="e">' + a.emoji + '</span><span class="l">' + esc(a.label) + (a.disabled ? '<small>' + esc(a.disabled) + '</small>' : '') + '</span><span class="m">' + meta + '</span></button>';
+      html += '<button data-qa="' + a.id + '"' + (npc ? ' data-npc="' + npc + '"' : '') + (a.disabled ? ' disabled title="' + esc(a.disabled) + '"' : '') + '><span class="e">' + a.emoji + '</span><span class="l">' + esc(a.label) + (a.disabled ? '<small>' + esc(a.disabled) + '</small>' : '') + '</span><span class="m">' + meta + '</span></button>';
     }
-    const links = {
-      desk: [['farm', '🪂', 'Farm airdrops…'], ['nft', '🖼️', 'NFT drops & WL grind…'], ['market', '📈', 'Open trading terminal'], ['gigs', '💼', 'Gig board']],
-      phone: [['market', '📈', 'Trade on phone'], ['dms', '💬', 'Open DMs'], ['feed', '🏠', 'Open the timeline'], ['wallet', '👛', 'Wallet']],
-      door: [['life', '🏠', 'Move to a bigger place…']],
-    }[obj] || [];
-    if (links.length) { html += '<div class="grp">Apps</div>'; for (const [tab, e, l] of links) html += '<button class="link" data-goto="' + tab + '"><span class="e">' + e + '</span><span class="l">' + l + '</span><span class="m">›</span></button>'; }
-    if (S().action) html += '<div class="grp">Now</div><button data-cancel="1"><span class="e">✋</span><span class="l">Stop: ' + esc(S().action.label) + '</span></button>';
-    menu.innerHTML = html;
+    return html;
+  }
+  function travelButtons(exclude) {
+    let h = '<div class="grp">Go somewhere</div>';
+    if (scene() !== 'town') h += '<button data-go="town"><span class="e">🚶</span><span class="l">Go outside (town)</span><span class="m">walk</span></button>';
+    if (scene() !== 'home') h += '<button data-go="home"><span class="e">🏠</span><span class="l">Go home</span><span class="m">walk</span></button>';
+    h += '<button data-ridemenu="1"><span class="e">🚕</span><span class="l">Call a ride…</span><span class="m">◎' + W.RIDE_COST + '</span></button>';
+    return h;
+  }
+  function placeMenu(html, p) {
+    menu.innerHTML = '<button class="mclose" data-close="1" aria-label="Close">✕</button>' + html;
     menu.hidden = false;
     const wrap = $('#wrap').getBoundingClientRect();
     let left = p.cssX + 10, top = p.cssY + 10;
     menu.style.left = '0px'; menu.style.top = '0px';
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
     if (left + mw > wrap.width - 8) left = Math.max(8, p.cssX - mw - 10);
+    if (left + mw > wrap.width - 4) left = Math.max(4, wrap.width - mw - 4);
     if (top + mh > wrap.height - 8) top = Math.max(8, wrap.height - mh - 8);
     menu.style.left = left + 'px'; menu.style.top = top + 'px';
+    menu.scrollTop = 0;
+  }
+  function nowRow() { return S().action ? '<div class="grp">Now</div><button data-cancel="1"><span class="e">✋</span><span class="l">Stop: ' + esc(S().action.label) + '</span></button>' : (pendingAct || trip ? '<div class="grp">Now</div><button data-cancel="1"><span class="e">✋</span><span class="l">Stop walking</span></button>' : ''); }
+  function openMenuFor(obj, p, fromChar) {
+    const acts = Sim.actionsFor(obj);
+    const title = fromChar ? '📱 Your phone' : objName(obj);
+    let html = '<h4><span>' + esc(title) + '</span><span class="mono">' + esc(Sim.fmtClock()) + '</span></h4>';
+    if (fromChar && scene() !== 'home') html += '<div class="grp" style="text-transform:none">Out and about: desk & phone stuff runs on your phone (25% slower, full speed at the café).</div>';
+    html += actButtons(acts);
+    if (obj === 'door') html += travelButtons();
+    const links = {
+      desk: [['farm', '🪂', 'Farm airdrops…'], ['nft', '🖼️', 'NFT drops & WL grind…'], ['market', '📈', 'Open trading terminal'], ['gigs', '💼', 'Gig board']],
+      phone: [['market', '📈', 'Trade on phone'], ['dms', '💬', 'Open DMs'], ['feed', '🏠', 'Open the timeline'], ['town', '🗺️', 'Town map & events'], ['wallet', '👛', 'Wallet']],
+      door: [['town', '🗺️', 'Town map & events'], ['life', '🏠', 'Move to a bigger place…']],
+      'bank:teller': [['wallet', '👛', 'Open wallet']], 'bank:otc': [['market', '📈', 'Open trading terminal']],
+    }[obj] || [];
+    if (fromChar && scene() !== 'home') html += travelButtons();
+    if (links.length) { html += '<div class="grp">Apps</div>'; for (const [tab, e, l] of links) html += '<button class="link" data-goto="' + tab + '"><span class="e">' + e + '</span><span class="l">' + l + '</span><span class="m">›</span></button>'; }
+    html += nowRow();
+    placeMenu(html, p);
+  }
+  function openRideMenu(p) {
+    let html = '<h4><span>🚕 Call a ride</span><span class="mono">◎' + W.RIDE_COST + ' · ' + W.RIDE_MINS + 'm</span></h4>';
+    const sc = scene();
+    for (const k in W.LOTS) {
+      if (k === sc || k === 'park') continue;
+      const L = W.LOTS[k]; const ev = W.eventAt(k); const open = L.kind === 'home' || W.isOpen(k);
+      html += '<button data-ride="' + k + '"' + (open ? '' : ' disabled') + '><span class="e">' + L.emoji + '</span><span class="l">' + esc(L.name) + (ev ? '<small style="color:var(--ok)">LIVE: ' + esc(ev.def.name) + '</small>' : open ? '' : '<small>closed · ' + W.hoursLabel(k) + '</small>') + '</span><span class="m">›</span></button>';
+    }
+    if (sc !== 'town') html += '<button data-ride="town"><span class="e">🌳</span><span class="l">Drop me by the park</span><span class="m">›</span></button>';
+    placeMenu(html, p);
+  }
+  function openExitMenu(p) {
+    let html = '<h4><span>🚪 Exit</span><span class="mono">' + esc(Sim.fmtClock()) + '</span></h4>';
+    html += '<button data-go="town"><span class="e">🚶</span><span class="l">Step outside</span><span class="m">›</span></button>';
+    html += '<button data-go="home"><span class="e">🏠</span><span class="l">Walk home</span><span class="m">›</span></button>';
+    html += '<button data-ridemenu="1"><span class="e">🚕</span><span class="l">Call a ride…</span><span class="m">◎' + W.RIDE_COST + '</span></button>';
+    placeMenu(html, p);
+  }
+  function whoHTML(ids) { return ids.length ? ids.map((id) => { const P = W.personInfo(id); return '<span title="' + esc(P.met ? P.name : 'someone new') + '">' + P.av + '</span>'; }).join(' ') : '<span class="muted">nobody yet</span>'; }
+  function openLotMenu(id, p) {
+    const L = W.LOTS[id]; const ev = W.eventAt(id); const open = L.kind === 'home' || W.isOpen(id);
+    let html = '<h4><span>' + L.emoji + ' ' + esc(L.name) + '</span><span class="mono">' + (L.kind === 'home' ? '' : esc(W.hoursLabel(id))) + '</span></h4>';
+    html += '<div class="lotinfo">' + esc(L.desc) + (ev ? '<div style="color:var(--ok);margin-top:.25rem"><b>LIVE: ' + ev.def.emoji + ' ' + esc(ev.def.name) + '</b> until ' + Sim.fmtClock(ev.end) + '</div>' : '') + (L.kind !== 'home' ? '<div style="margin-top:.25rem">Inside: ' + whoHTML(W.npcsAt(id)) + '</div>' : '') + (open ? '' : '<div style="color:var(--bad);margin-top:.25rem">Closed right now</div>') + '</div>';
+    html += '<button data-go="' + id + '"' + (open ? '' : ' disabled') + '><span class="e">🚶</span><span class="l">' + (L.kind === 'home' ? 'Walk home' : 'Walk in') + '</span><span class="m">›</span></button>';
+    html += '<button data-ride="' + id + '"' + (open ? '' : ' disabled') + '><span class="e">🚕</span><span class="l">Ride there</span><span class="m">◎' + W.RIDE_COST + '</span></button>';
+    if (L.kind !== 'home') {
+      const objs = TV.INTERIORS[id].objs; let acts = [];
+      for (const k in objs) if (!objs[k].deco && !objs[k].exit) acts = acts.concat(Sim.actionsFor(id + ':' + k));
+      if (acts.length) html += '<div class="grp">Things to do (walks you there)</div>' + actButtons(acts);
+    }
+    html += nowRow();
+    placeMenu(html, p);
+  }
+  function openParkMenu(p) {
+    let html = '<h4><span>🌳 Lekki Park</span><span class="mono">' + esc(Sim.fmtClock()) + '</span></h4><div class="lotinfo">Touch grass, meet people. Around: ' + whoHTML(W.npcsAt('park')) + '</div>';
+    let acts = []; for (const k in W.PARK_SPOTS) acts = acts.concat(Sim.actionsFor('park:' + k));
+    html += actButtons(acts) + nowRow();
+    placeMenu(html, p);
+  }
+  function relBars(P) {
+    const bar = (lbl, v, col) => '<div class="rb"><span>' + lbl + '</span><div class="bar"><i style="width:' + Math.round(v) + '%;background:' + col + '"></i></div><b>' + Math.round(v) + '</b></div>';
+    return bar('Friend', P.rel, 'linear-gradient(90deg,#14F195,#3dd68c)') + bar('Rival', P.rival || 0, 'linear-gradient(90deg,#ff9a3c,#ff5c7a)') + bar('Romance', P.romance || 0, 'linear-gradient(90deg,#ff5ca8,#c77dff)');
+  }
+  function openNpcMenu(id, p) {
+    const P = W.personInfo(id);
+    let html = '<div class="npcard"><div class="nav" style="background:' + esc(P.color) + '33">' + P.av + '</div><div><b>' + esc(P.met ? P.name : 'Someone new') + '</b> <span class="muted small">' + (P.met ? '@' + esc(P.handle) : '') + '</span><div class="small muted">' + esc(P.role) + ' · ' + Sim.fmtNum(P.followers) + ' followers' + (P.follows ? ' · follows you' : '') + '</div>' + (P.met ? '' : '<div class="small" style="color:var(--warn)">Not met yet. Any interaction introduces you.</div>') + '</div></div>';
+    html += '<div class="relbox">' + relBars(P) + '</div>';
+    const acts = Object.keys(W.INTERACTIONS).map((k) => { const it = W.INTERACTIONS[k]; return { id: 'soc_' + k, label: it.label, emoji: it.emoji, mins: it.mins, cost: 0, group: null, disabled: S().pending ? 'Deal with your DMs first' : null }; });
+    html += '<div class="pie">' + acts.map((a) => '<button data-qa="' + a.id + '" data-npc="' + id + '"' + (a.disabled ? ' disabled' : '') + '><span class="e">' + a.emoji + '</span><span class="l">' + esc(a.label) + '</span></button>').join('') + '</div>';
+    if (P.met) html += '<button class="link" data-dmnpc="' + id + '"><span class="e">✉️</span><span class="l">Open DMs</span><span class="m">›</span></button>';
+    placeMenu(html, p);
   }
   function closeMenu() { menu.hidden = true; }
   menu.addEventListener('click', (ev) => {
     const b = ev.target.closest('button'); if (!b || b.disabled) return;
-    if (b.dataset.qa) queueAction(b.dataset.qa);
-    else if (b.dataset.goto) { setTab(b.dataset.goto); closeMenu(); }
-    else if (b.dataset.cancel) { cancelCurrent(); closeMenu(); }
+    const d = b.dataset;
+    if (d.qa) queueAction(d.qa, { npc: d.npc });
+    else if (d.goto) { setTab(d.goto); closeMenu(); }
+    else if (d.cancel) { cancelCurrent(); closeMenu(); }
+    else if (d.go) travel(d.go, false);
+    else if (d.ride) travel(d.ride, true);
+    else if (d.ridemenu) { const r = menu.getBoundingClientRect(), w = $('#wrap').getBoundingClientRect(); openRideMenu({ cssX: r.left - w.left, cssY: r.top - w.top }); }
+    else if (d.dmnpc) { dmOpen = d.dmnpc; setTab('dms'); closeMenu(); }
+    else if (d.close) closeMenu();
   });
   document.addEventListener('click', (ev) => { if (!menu.hidden && !menu.contains(ev.target) && ev.target !== cv) closeMenu(); });
   function cancelCurrent() {
-    const a = S().action; if (!a) { pendingAct = null; char.path = []; return; }
+    const a = S().action; if (!a) { pendingAct = null; trip = null; char.path = []; clearTalk(); if (WS()) WS().talkTo = null; return; }
+    if (String(a.id).indexOf('soc_') === 0 && WS()) WS().talkTo = null;
     if (a.id === 'passout') { toast('Cannot cancel passing out. Your body has spoken.', 'bad'); return; }
     leaveSeat(); Sim.cancelAction(); renderPanelSoon();
   }
@@ -474,12 +772,18 @@
       $('#aLeft').textContent = Sim.fmtDur(Math.max(0, a.mins - a.prog)) + ' left';
       $('#aCancel').hidden = a.id === 'passout';
     } else if (pendingAct) {
-      $('#aEmoji').textContent = '🚶'; $('#aLabel').textContent = 'Walking to ' + OBJ[pendingAct.obj].name + ' → ' + pendingAct.label;
+      $('#aEmoji').textContent = '🚶'; $('#aLabel').textContent = (pendingAct.obj === 'npc' ? 'Walking up to ' + (W.personInfo(pendingAct.npc) || {}).name : 'Walking to ' + objName(pendingAct.obj)) + ' → ' + pendingAct.label;
+      $('#aProg').style.width = '0%'; $('#aLeft').textContent = ''; $('#aCancel').hidden = false;
+    } else if (trip) {
+      $('#aEmoji').textContent = '🚶'; $('#aLabel').textContent = 'Heading to ' + placeName(trip.dest) + '…';
       $('#aProg').style.width = '0%'; $('#aLeft').textContent = ''; $('#aCancel').hidden = false;
     } else {
       $('#aEmoji').textContent = '🧍'; $('#aLabel').textContent = idleLine(); $('#aProg').style.width = '0%'; $('#aLeft').textContent = ''; $('#aCancel').hidden = true;
     }
-    $('#homeBadge').textContent = Sim.HOMES[st.home.tier].emoji + ' ' + Sim.HOMES[st.home.tier].name;
+    const sc = scene();
+    const evNow = W.activeEvents()[0];
+    $('#homeBadge').textContent = sc === 'home' ? Sim.HOMES[st.home.tier].emoji + ' ' + Sim.HOMES[st.home.tier].name : sc === 'town' ? '🌆 Town' + (evNow ? ' · LIVE ' + evNow.def.emoji + ' ' + evNow.def.name : '') : W.LOTS[sc].emoji + ' ' + W.LOTS[sc].name + (W.eventAt(sc) ? ' · LIVE' : '');
+    $('#hint').textContent = sc === 'home' ? 'Tap objects to act · tap the door to go outside' : sc === 'town' ? 'Tap a building to go in · tap a sim to interact · tap yourself for your phone' : 'Tap objects or sims · door at the bottom leads out';
     // badges
     const ud = SO.unreadTotal(); $('#bDms').textContent = ud || '';
     const ready = st.gigs.filter(Sim.gigReady).length; $('#bGigs').textContent = (st.offers.length + ready) || '';
@@ -551,7 +855,7 @@
       h += '<div class="' + cls + '">' + avHTML(e) + '<div class="bd"><div class="hd"><b>' + esc(e.name) + '</b><span>@' + esc(e.handle) + ' · ' + ago(e.t) + '</span>' + (e.role ? '<span class="chip">' + esc(e.role) + '</span>' : '') + (e.tier === 2 ? '<span class="tierv">🚀 viral</span>' : e.tier === 0 ? '<span class="tierf">flop</span>' : '') + (e.dm ? '<span class="chip purple">DM/brief</span>' : '') + '</div>';
       h += '<div class="tx">' + esc(e.text) + '</div>';
       if (e.thread && e.thread.length) h += '<div class="thr">' + e.thread.slice(0, 4).map((r) => '<div>' + esc(r.av) + ' <b>@' + esc(r.handle) + '</b>: ' + esc(r.text) + '</div>').join('') + '</div>';
-      if (!e.sys) h += '<div class="mx"><span>💬 ' + Sim.fmtNum(e.replies || (e.thread ? e.thread.length : 0)) + '</span><button data-rt="' + e.id + '" class="' + (rted ? 'on' : '') + '">🔁 ' + Sim.fmtNum(e.rts || 0) + '</button><button data-like="' + e.id + '" class="' + (liked ? 'on' : '') + '">♥ ' + Sim.fmtNum(e.likes || 0) + '</button>' + (e.npc ? '<button data-dm="' + e.npc + '">✉️ DM</button>' : '') + '</div>';
+      if (!e.sys) h += '<div class="mx"><span>💬 ' + Sim.fmtNum(e.replies || (e.thread ? e.thread.length : 0)) + '</span><button data-rt="' + e.id + '" class="' + (rted ? 'on' : '') + '">🔁 ' + Sim.fmtNum(e.rts || 0) + '</button><button data-like="' + e.id + '" class="' + (liked ? 'on' : '') + '">♥ ' + Sim.fmtNum(e.likes || 0) + '</button>' + (e.npc && SO.person(e.npc) && SO.person(e.npc).met ? '<button data-dm="' + e.npc + '">✉️ DM</button>' : '') + '</div>';
       h += '</div></div>';
     }
     return h;
@@ -590,10 +894,13 @@
       const th = so.threads[p.id]; const lm = th[th.length - 1];
       h += '<div class="person" data-open="' + p.id + '"><div class="av">' + p.av + '</div><div class="pm"><b>' + esc(p.name) + '</b> <span class="small muted" style="display:inline">· ' + esc(p.role) + '</span><span>' + (lm.from === 'me' ? 'You: ' : '') + esc(lm.text) + '</span></div>' + (so.unread[p.id] ? '<em>' + so.unread[p.id] + '</em>' : '') + '</div>';
     }
-    h += '</div><h3>Sims in your world <span class="chip">NPC players</span></h3><div class="people">';
-    for (const p of people) {
+    h += '</div><h3>Sims you have met <span class="chip">meet more in town</span></h3><div class="people">';
+    const metP = people.filter((p) => p.met), unmetP = people.filter((p) => !p.met && p.pers !== 'scammer');
+    if (!metP.length) h += '<div class="empty small">You have not met anyone in person yet. Walk out the front door, tap a sim in town and say hi. Met sims show up here, in your feed and in DMs.</div>';
+    for (const p of metP) {
       h += '<div class="person" data-open="' + p.id + '"><div class="av">' + p.av + '</div><div class="pm"><b>' + esc(p.name) + '</b> <span class="small muted" style="display:inline">@' + esc(p.handle) + '</span><span>' + esc(p.role) + ' · rel ' + Math.round(p.rel) + (p.follows ? ' · follows you' : '') + '</span></div><button class="btn ' + (p.youFollow ? 'ghost' : '') + ' sm" data-follow="' + p.id + '">' + (p.youFollow ? 'Following' : 'Follow') + '</button></div>';
     }
+    if (unmetP.length) { h += '</div><h3>Not met yet <span class="chip">🔒</span></h3><div class="people">'; for (const p of unmetP) h += '<div class="person locked"><div class="av">' + p.av + '</div><div class="pm"><b>??? · ' + esc(p.role) + '</b><span>Meet them in town to unlock DMs</span></div></div>'; }
     return h + '</div>';
   };
 
@@ -760,6 +1067,40 @@
     return h;
   };
 
+  PANELS.town = function () {
+    const sc = scene(); const st = S();
+    let h = '<div class="card"><div class="row sb"><b>📍 ' + (sc === 'home' ? 'At home' : sc === 'town' ? 'Walking around town' : 'At ' + esc(W.LOTS[sc].name)) + '</b><span class="mono small muted">' + esc(Sim.fmtClock()) + '</span></div>';
+    h += '<div class="row wrap" style="margin-top:.45rem">' + (sc !== 'town' ? '<button class="btn sm" data-tgo="town">🚶 Go outside</button>' : '') + (sc !== 'home' ? '<button class="btn ghost sm" data-tgo="home">🏠 Go home</button>' : '') + '</div>';
+    h += '<div class="small muted" style="margin-top:.35rem">Walking takes game time. A ride costs ◎' + W.RIDE_COST + ' and takes ' + W.RIDE_MINS + ' min. Your phone (feed, market, DMs, farming) works anywhere.</div></div>';
+    h += '<h3>Events <span class="chip">on the clock</span></h3>';
+    const evs = W.upcomingEvents(6);
+    for (const e of evs) {
+      const live = st.t >= e.start && st.t < e.end;
+      h += '<div class="card"><div class="row sb"><b>' + e.def.emoji + ' ' + esc(e.def.name) + '</b>' + (live ? '<span class="chip live">LIVE now</span>' : '<span class="chip">' + (Sim.day() === Math.floor(e.start / 1440) + 1 ? 'today' : 'Day ' + (Math.floor(e.start / 1440) + 1)) + ' ' + Sim.fmtClock(e.start) + '</span>') + '</div>';
+      h += '<div class="small muted">' + W.LOTS[e.def.loc].emoji + ' ' + esc(W.LOTS[e.def.loc].name) + ' · ' + Sim.fmtClock(e.start) + '–' + Sim.fmtClock(e.end) + ' · ' + esc(e.def.desc) + '</div>';
+      if (e.id === 'whale') { const why = W.whaleEntry(); h += '<div class="small" style="color:' + (why ? 'var(--warn)' : 'var(--ok)') + '">' + (why ? '🔒 ' + esc(why) : '✅ You are on the list') + '</div>'; }
+      h += '<div class="row" style="margin-top:.4rem"><button class="btn sm" data-tgo="' + e.def.loc + '">🚶 Walk</button><button class="btn ghost sm" data-tride="' + e.def.loc + '">🚕 Ride ◎' + W.RIDE_COST + '</button></div></div>';
+    }
+    h += '<h3>Places</h3>';
+    for (const k in W.LOTS) {
+      const L = W.LOTS[k]; if (k === 'home') continue;
+      const open = L.kind === 'park' || W.isOpen(k); const who = k === 'park' ? W.npcsAt('park') : W.npcsAt(k);
+      h += '<div class="tok" style="grid-template-columns:1.6fr 1fr auto;cursor:default"><div class="s"><b>' + L.emoji + ' ' + esc(L.name) + '</b><span>' + (open ? W.hoursLabel(k) : '<span class="down">closed</span> · ' + W.hoursLabel(k)) + (W.eventAt(k) ? ' · <span class="up">LIVE</span>' : '') + '</span></div><div class="small">' + (who.length ? who.map((id) => W.personInfo(id).av).join('') : '<span class="muted">empty</span>') + '</div><div class="c">' + (k === 'park' ? '<button class="btn ghost sm" data-tgo="town">Go</button>' : '<button class="btn ghost sm" data-tgo="' + k + '"' + (open ? '' : ' disabled') + '>Go</button>') + '</div></div>';
+    }
+    const ppl = W.TOWN_IDS.map((id) => W.personInfo(id));
+    const met = ppl.filter((p) => p.met).sort((a, b) => b.rel - a.rel);
+    h += '<h3>People you have met <span class="chip">' + met.length + '/' + ppl.length + '</span></h3>';
+    if (!met.length) h += '<div class="empty small">Nobody yet. Go outside and tap a sim to chat. Meeting people in person unlocks their DMs and posts.</div>';
+    for (const P of met) {
+      const where = P.where === 'away' ? 'out of town' : P.where === 'transit' ? 'walking somewhere' : P.where === 'street' ? 'on the street' : 'at ' + W.LOTS[P.where].name;
+      h += '<div class="card"><div class="row sb"><span><b>' + P.av + ' ' + esc(P.name) + '</b> <span class="small muted">' + esc(P.role) + '</span></span><span class="small muted">' + esc(where) + '</span></div><div class="relbox">' + relBars(P) + '</div>';
+      h += '<div class="row" style="margin-top:.35rem"><button class="btn ghost sm" data-dm="' + P.id + '">✉️ DM</button>' + (P.where !== 'away' && P.where !== 'transit' ? '<button class="btn ghost sm" data-tgo="' + (P.where === 'street' || P.where === 'park' ? 'town' : P.where) + '">📍 Go find</button>' : '') + '</div></div>';
+    }
+    const unmet = ppl.filter((p) => !p.met);
+    if (unmet.length) h += '<div class="small muted" style="margin-top:.5rem">Still to meet: ' + unmet.map((p) => p.av + ' ' + esc(p.role)).join(' · ') + '</div>';
+    return h;
+  };
+
   PANELS.life = function () {
     const st = S();
     let h = '<h3>Careers <span class="chip">focus up to 3 · +20% XP & outcomes</span></h3>';
@@ -810,6 +1151,8 @@
 
   // ---- panel events ----
   panel.addEventListener('click', (ev) => {
+    const tb = ev.target.closest('[data-tgo],[data-tride]');
+    if (tb && !tb.disabled) { if (tb.dataset.tgo) travel(tb.dataset.tgo, false); else travel(tb.dataset.tride, true); flushEvents(); renderPanelSoon(); return; }
     const b = ev.target.closest('[data-qa],[data-like],[data-rt],[data-dm],[data-open],[data-dmback],[data-follow],[data-msg],[data-quick],[data-send],[data-goto],[data-mksel],[data-accept],[data-decline],[data-deliver],[data-mkbuy],[data-mksell],[data-amt],[data-amtp],[data-wallet],[data-claim],[data-mint],[data-list],[data-unlist],[data-floor],[data-career],[data-move],[data-how],[data-save]');
     if (!b || b.disabled) return;
     const d = b.dataset;
@@ -889,7 +1232,7 @@
           const name = draft.name.trim().slice(0, 20) || 'Anon';
           const handle = (draft.handle.trim().replace(/^@/, '').replace(/[^A-Za-z0-9_]/g, '') || 'anon').slice(0, 18);
           Sim.newGame({ name, handle, color: draft.color, hat: draft.hat, careers: draft.careers.slice() });
-          char.x = 5.5; char.y = 5.5; char.path = [];
+          char.x = 5.5; char.y = 5.5; char.path = []; pendingAct = null; trip = null;
           creating = false; closeModal(); saveGame(); drawAvatar(); renderPanel(true); updateTicker(); flushEvents();
           showHowTo();
           return;
@@ -901,7 +1244,10 @@
   }
   function showHowTo() {
     const h = '<p class="kicker">// how to play</p><h2>Welcome to Web3 Sims 💎</h2><p>Live the full onchain grinder life. Keep your sim alive, stack (fake) SOL, climb your career ladders.</p><div class="howto">' +
-      '<div><b>🏠 Click objects</b>Desk = post, farm, build, outreach. Phone = scroll, Spaces, DMs. Bed, kitchen, shower, couch keep needs up. Door = touch grass.</div>' +
+      '<div><b>🏠 Tap objects</b>Desk = post, farm, build, outreach. Phone = scroll, Spaces, DMs. Bed, kitchen, shower, couch keep needs up.</div>' +
+      '<div><b>🚪 Go outside</b>The front door leads to town: café, Web3 Hall, club, gym, park, market, bank and your neighbors. Walk, or pay ◎0.02 for a ride.</div>' +
+      '<div><b>🤝 Meet sims</b>Tap a sim for Chat, Talk crypto, Share alpha, Pitch a gig, Collab, Joke, Befriend, Flirt, Exchange handles, Space invite… or Be rude. Friend / rival / romance bars change DMs, gigs and alpha.</div>' +
+      '<div><b>🗓️ Events</b>Meetups at night, Onchain Summit, Whale Party (invite-only), Hackathon weekends. Check the 🗺️ Town tab.</div>' +
       '<div><b>💎 Watch the plumbob</b>Needs decay over time. Low needs make outcomes worse; very low and your sim refuses to work (or passes out).</div>' +
       '<div><b>🪂 Farm airdrops</b>Do tasks on testnets for points → snapshot → TGE → claim tokens. More wallets = more points + sybil risk.</div>' +
       '<div><b>📈 Trade the news</b>Headlines move prices: wars dump, ceasefires pump, ETFs rip, hacks nuke. Big buys move price. Whales watch.</div>' +
@@ -960,7 +1306,16 @@
 
   // ================= SAVE / LOOP =================
   let creating = false;
-  function saveGame() { if (creating) return; try { localStorage.setItem(Sim.SAVE_KEY, Sim.save()); } catch (e) {} }
+  function saveGame() { if (creating) return; try { if (WS()) WS().pos = [char.x, char.y]; localStorage.setItem(Sim.SAVE_KEY, Sim.save()); } catch (e) {} }
+  window.__World = {
+    afterLoad(fresh) {
+      const sc = scene(); pendingAct = null; trip = null; char.path = [];
+      if (WS()) { WS().approach = null; if (!(S().action && String(S().action.id).indexOf('soc_') === 0)) WS().talkTo = null; }
+      if (sc === 'town') { const p = WS().pos; const ok = p && W.walkable(Math.floor(p[0]), Math.floor(p[1])); char.x = ok ? p[0] : 4.5; char.y = ok ? p[1] : 5.5; }
+      else if (sc !== 'home') { char.x = 6.5; char.y = 7.5; }
+      else if (!fresh && WS().pos && WS().pos[0] < COLS && WS().pos[1] < ROWS && !blocked.has(Math.floor(WS().pos[0]) + ',' + Math.floor(WS().pos[1]))) { char.x = WS().pos[0]; char.y = WS().pos[1]; }
+    },
+  };
   window.addEventListener('beforeunload', saveGame);
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
 
@@ -1020,6 +1375,6 @@
     window.__w3sBooted = true;
     const ld = document.getElementById('loader'); if (ld) ld.style.display = 'none';
   }
-  window.__GAME = { setSpeed, setTab, saveGame, renderPanel, flushEvents, get tab() { return tab; } };
+  window.__GAME = { setSpeed, setTab, saveGame, renderPanel, flushEvents, travel, queueAction, enterScene, get tab() { return tab; }, get char() { return char; }, get trip() { return trip; }, get pendingAct() { return pendingAct; }, scene };
   boot();
 })();

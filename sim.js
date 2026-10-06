@@ -192,7 +192,7 @@
     S = freshState(player);
     out = [];
     for (const m of mods) if (m.init) m.init(S, true);
-    sys('Welcome to Web3, @' + S.player.handle + '. 150 followers, 0.50 SOL and a dream. Click objects in your apartment to grind. wagmi 🫡', '🫡');
+    sys('Welcome to Web3, @' + S.player.handle + '. 150 followers, 0.50 SOL and a dream. Click objects in your apartment to grind, or walk out the front door into town to meet people. wagmi 🫡', '🫡');
     daily(true);
     recordNW();
     return S;
@@ -233,7 +233,8 @@
     for (const k of NEEDS) if (S.needs[k] < 20) q -= 0.08;
     const it = S.items;
     let gear = 1 + (it.ringlight ? 0.08 : 0) + (it.led ? 0.05 : 0) + (it.monitor2 ? 0.10 : 0) + (it.gamingpc ? 0.15 : 0);
-    return clamp(q, 0.3, 1.2) * gear;
+    const wb = root.Sim && root.Sim.World ? root.Sim.World.qualityBonus() : 1;
+    return clamp(q, 0.3, 1.2) * gear * wb;
   }
   function scale() { return Math.sqrt(1 + S.stats.followers / 400); }
   function title() {
@@ -344,7 +345,8 @@
     list.nap = { obj: 'bed', label: 'Power nap', emoji: '💤', mins: 60, fx: { energy: 15 }, sleep: true };
 
     list.order = { obj: 'kitchen', label: 'Order food', emoji: '🛵', mins: 20, cost: 0.05, fx: { hunger: 60, fun: 4 } };
-    list.cook = { obj: 'kitchen', label: 'Cook (cheap)', emoji: '🍳', mins: 45, cost: 0.01, fx: { hunger: 50, fun: 3, energy: -3 } };
+    const groc = S.world && S.world.groceries > 0;
+    list.cook = { obj: 'kitchen', label: groc ? 'Cook with groceries (' + S.world.groceries + ' left)' : 'Cook (cheap)', emoji: '🍳', mins: 45, cost: groc ? 0 : 0.01, fx: { hunger: groc ? 75 : 50, fun: groc ? 6 : 3, energy: -3 }, done: () => { if (S.world && S.world.groceries > 0) S.world.groceries--; } };
     list.snack = { obj: 'kitchen', label: 'Grab a snack', emoji: '🍪', mins: 5, fx: { hunger: 12 } };
     if (it.coffee) list.coffee = { obj: 'kitchen', label: 'Brew coffee', emoji: '☕', mins: 10, fx: { energy: 18, hunger: -2, fun: 2 } };
 
@@ -354,8 +356,8 @@
     list.shower = { obj: 'shower', label: 'Quick shower', emoji: '🚿', mins: 20, fx: { hygiene: 75, fun: 3 } };
     list.longshower = { obj: 'shower', label: 'Long shower (think)', emoji: '🧼', mins: 40, fx: { hygiene: 100, fun: 10 }, done: () => { if (R() < 0.3) { S.flags.alpha = true; toast('🚿 Shower thought: a banger thread idea. Next thread boosted.', 'good'); } } };
 
-    list.grass = { obj: 'door', label: 'Touch grass', emoji: '🌳', mins: 180, fx: { fun: 35, social: 35, hygiene: -10, energy: -8, hunger: -5 }, outside: true, clean: true, done: doGrass };
-    list.meetup = { obj: 'door', label: 'Crypto meetup', emoji: '🍻', mins: 240, cost: 0.03, fx: { social: 50, fun: 20, energy: -15, hygiene: -8 }, outside: true, clean: true, done: doMeetup };
+    list.grass = { obj: 'door', label: 'Touch grass', emoji: '🌳', mins: 180, fx: { fun: 35, social: 35, hygiene: -10, energy: -8, hunger: -5 }, outside: true, clean: true, hidden: true, done: doGrass };
+    list.meetup = { obj: 'door', label: 'Crypto meetup', emoji: '🍻', mins: 240, cost: 0.03, fx: { social: 50, fun: 20, energy: -15, hygiene: -8 }, outside: true, clean: true, hidden: true, done: doMeetup };
     list.code = { obj: 'desk', group: 'Build', label: 'Ship code (builder)', emoji: '👨‍💻', mins: it.monitor2 ? 100 : 120, fx: { energy: -16 * deskE, fun: -2, social: -3 }, work: true, done: doCode };
     list.hackathon = { obj: 'desk', group: 'Build', label: 'Weekend hackathon', emoji: '🏆', mins: 360, fx: { energy: -35 * deskE, fun: 10, social: 15, hunger: -15 }, work: true, minXP: ['builder', 150], done: doHackathon };
     for (const m of mods) if (m.actions) Object.assign(list, m.actions(it, deskE));
@@ -377,7 +379,7 @@
     let why = null;
     if (S.pending) why = 'Deal with your DMs first';
     else if (a.cost && S.stats.sol < a.cost) why = 'Not enough SOL. ngmi (for now)';
-    else if (a.minFollowers && S.stats.followers < a.minFollowers) why = 'Need ' + a.minFollowers + ' followers to host';
+    else if (a.minFollowers && S.stats.followers < a.minFollowers) why = 'Need ' + a.minFollowers + ' followers';
     else if (a.minXP && (S.career.xp[a.minXP[0]] || 0) < a.minXP[1]) why = 'Need ' + a.minXP[1] + ' ' + CAREERS[a.minXP[0]].name + ' XP';
     else if (a.req && a.req()) why = a.req();
     else if (a.work && n.energy < 12) why = 'Too tired, ser. Sleep first 😴';
@@ -389,12 +391,14 @@
     return why;
   }
 
-  function startAction(id) {
+  function startAction(id, opts) {
     if (check(id)) return false;
     const a = A()[id];
+    opts = opts || {};
     if (a.cost) S.stats.sol = r2(S.stats.sol - a.cost);
     if (a.onStart) a.onStart();
-    S.action = { id, obj: a.obj, label: a.label, emoji: a.emoji, mins: a.mins, fx: a.fx, prog: 0, sleep: !!a.sleep, outside: !!a.outside };
+    const mins = Math.round(a.mins * (opts.minsMult || 1));
+    S.action = { id, obj: a.obj, label: a.label + (opts.remote ? ' (on the go)' : ''), emoji: a.emoji, mins, fx: a.fx, prog: 0, sleep: !!a.sleep, outside: !!a.outside, remote: !!opts.remote };
     return true;
   }
   function cancelAction() {

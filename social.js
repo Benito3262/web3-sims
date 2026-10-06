@@ -62,6 +62,7 @@
     SO = S.so;
   };
 
+  function isMet(id) { return !!(SO && SO.people[id] && SO.people[id].met); }
   function person(id) { const p = PEOPLE.find((x) => x.id === id); return p ? Object.assign({}, p, SO.people[id]) : null; }
   function fill(text) {
     const Mk = Sim.Market && Sim.Market.M;
@@ -142,7 +143,7 @@
       return;
     }
     if (roll < 0.42) {
-      const ids = ['oracle', 'whale', 'dave'].filter((i) => SO.people[i].rel >= 20 || R() < 0.3);
+      const ids = ['oracle', 'whale', 'dave', 'zara', 'kofi'].filter((i) => SO.people[i] && isMet(i) && (SO.people[i].rel >= 20 || R() < 0.3));
       if (!ids.length || !Sim.Market) return;
       const id = pick(ids); const r = SO.people[id].rel;
       const toks = Object.values(Sim.Market.M.tokens).filter((t) => t.sym !== 'SOL' && !t.rugged);
@@ -154,7 +155,7 @@
       return;
     }
     if (roll < 0.6 && st.followers >= 150) {
-      const id = pick(['chad', 'shill', 'wendy', 'tunde']);
+      const id = pick(['chad', 'shill', 'wendy', 'tunde', 'femi', 'lola'].filter((i) => i === 'chad' || i === 'shill' || isMet(i)));
       const tier = id === 'shill' ? 'low' : id === 'chad' ? 'normal' : 'premium';
       const o = Sim.h.makeOffer(tier, true);
       S.offers.unshift(o);
@@ -164,14 +165,18 @@
     }
     if (roll < 0.72 && Sim.NFT) {
       const d = Sim.NFT.N.drops.find((x) => x.phase === 'upcoming' && !x.wl);
-      if (d) { receive('jpeg', 'got a spare WL for ' + d.name + ' ' + d.emoji + '. want it? first come first serve', { kind: 'wl', dropId: d.id, open: true }); return; }
+      if (d && isMet('jpeg')) { receive('jpeg', 'got a spare WL for ' + d.name + ' ' + d.emoji + '. want it? first come first serve', { kind: 'wl', dropId: d.id, open: true }); return; }
     }
     if (roll < 0.82) {
-      const id = pick(['wendy', 'tunde', 'kemi', 'ada']);
+      const pool = ['wendy', 'tunde', 'kemi', 'ada', 'femi'].filter(isMet);
+      if (!pool.length) return;
+      const id = pick(pool);
       receive(id, pick(['wanna co-host a Space this week? 🎙️', 'thinking of doing a collab thread. you in?', 'your last post was fire. lets do something together']), { kind: 'collab', open: true });
       return;
     }
-    const id = pick(['wendy', 'ada', 'kemi', 'dave', 'frog', 'tunde']);
+    const pool2 = ['wendy', 'ada', 'kemi', 'dave', 'frog', 'tunde', 'kofi', 'lola'].filter(isMet);
+    if (!pool2.length) return;
+    const id = pick(pool2);
     const p = person(id);
     receive(id, pick({ wholesome: ['how is the grind going? 💜', 'saw your post, proud of you fr', 'remember to touch grass this week'], degen: ['bro are you in on $' + fill('{MEME}') + ' yet', 'I am down 60% today. how about you', 'mint tonight?'], toxic: ['your last post flopped lol', 'who writes your threads', 'ratio incoming'], farmer: ['did you check in on ' + fill('{PROTO}') + ' today?', 'how many wallets are you running? (asking for a fren)', 'snapshot szn is coming 🧑🏾‍🌾'] }[p.pers] || ['gm']));
   }
@@ -214,7 +219,10 @@
   function follow(id, on) { Adapter.follow(id, on); return true; }
 
   function npcPostNow(p) {
-    p = p || pick(PEOPLE.filter((x) => x.pers !== 'scammer' || R() < 0.2));
+    if (!p) {
+      const known = PEOPLE.filter((x) => x.pers !== 'scammer' && (isMet(x.id) || (SO.people[x.id] && SO.people[x.id].youFollow)));
+      p = known.length && R() < 0.8 ? pick(known) : pick(PEOPLE.filter((x) => x.pers !== 'scammer' || R() < 0.2));
+    }
     feed({ npc: p.id, name: p.name, handle: p.handle, av: p.av, text: fill(pick(POSTS[p.pers])), likes: randInt(3, 900), rts: randInt(0, 150), role: p.role });
   }
 
@@ -249,7 +257,7 @@
   };
 
   Sim.Social = {
-    mod, PEOPLE, person, sendDM, receive, markRead, unreadTotal, act, like, repost, follow, npcPostNow, incomingDM,
+    mod, PEOPLE, person, isMet, sendDM, receive, markRead, unreadTotal, act, like, repost, follow, npcPostNow, incomingDM,
     setAdapter(a) { Adapter = a; }, get adapter() { return Adapter; }, get SO() { return SO; },
   };
   Sim.use(mod);
